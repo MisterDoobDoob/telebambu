@@ -1,3 +1,3 @@
 #!/bin/sh
 
-kill $(cat telebambu.pid)
+kill $(pgrep python)
