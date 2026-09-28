@@ -1,12 +1,10 @@
 import asyncio
 import time
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from bambulabs_api import GcodeState
 
 from .manager import PrinterManager, EventType
 from bot.messages import MessageService
-import config as cfg
 
 # Track which printers have been reported as stale to avoid spam
 _stale_camera_reported: set[int] = set()
@@ -41,28 +39,28 @@ async def monitor_loop(printer_manager: PrinterManager, message_service: Message
 
 
 async def check_stale_cameras(printer_manager: PrinterManager, message_service: MessageService):
-    """Check if any idle printers have stale cameras and notify owner."""
+    """Auto-restart idle/finished printers with no camera frame."""
     for i, printer in enumerate(printer_manager.printers):
         if not printer or not printer.mqtt_client_ready():
             continue
 
         gcode_state = printer.get_state()
         has_frame = printer_manager.has_camera_frame(i)
+        not_printing = gcode_state in (GcodeState.IDLE, GcodeState.FINISH)
 
-        # If printer is IDLE and has no camera frame, it might need a restart
-        if gcode_state == GcodeState.IDLE and not has_frame:
+        if not has_frame and not_printing:
             if i not in _stale_camera_reported:
                 _stale_camera_reported.add(i)
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Restart Printer", callback_data=f"restart_printer_{i}")]
-                ])
-                await message_service.bot.send_message(
-                    chat_id=cfg.OWNER_ID,
-                    text=f"Printer {i + 1} is IDLE but camera is not updating. Consider restarting.",
-                    reply_markup=keyboard
+                await message_service.log_message(
+                    f"Printer {i + 1} has no camera ({gcode_state}). Auto-restarting..."
                 )
+                try:
+                    printer.reboot()
+                    printer.disconnect()
+                    printer.connect()
+                except Exception as e:
+                    await message_service.log_message(f"Failed to auto-restart Printer {i + 1}: {e}")
         elif has_frame and i in _stale_camera_reported:
-            # Camera recovered, clear the flag
             _stale_camera_reported.discard(i)
 
 
