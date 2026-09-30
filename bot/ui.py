@@ -4,19 +4,59 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from data import Role
 from data.storage import PrintSession, Storage
 
-HELP_TEXT = (
+USER_HELP = (
     "Available commands:\n"
     "/help - Show this help message\n"
-    "/info [printer] - Show info about your print\n"
+    "/info - Summary of your claimed and watched prints\n"
+    "/info <printer> - Details about a print\n"
+    "/claim <printer> - Claim an unclaimed print\n"
+    "/unclaim [printer] - Unclaim your print\n"
     "/notify [printer] <layer> - Send a one-time notification at a layer\n"
     "/notify [printer] <percent>% - Send a one-time notification at a percentage\n"
     "/notify_every [printer] layers|time|percent <number> - Send recurring camera snapshots\n"
     "/notify_every [printer] off - Disable recurring camera snapshots\n"
+    "/notify_user <printer> [remove] <user> [user ...] - Notify other users about a print\n"
+    "/stop_at [printer] <layer> - Stop your print at a layer (or 'off')\n"
     "/camera [printer] - View camera image from your printer\n"
     "/light [printer] - Toggle your printer's light\n"
-    "/unclaim [printer] - Unclaim your print\n\n"
-    "Note: [printer] is required when you have multiple prints claimed."
+    "/staff [list [user]] - See who the owner, admins and mods are\n\n"
+    "Note: [printer] is required when you have multiple prints claimed. "
+    "Users can be given as @username, user id, or by replying to their message."
 )
+
+ADMIN_HELP = (
+    "Admin commands:\n"
+    "/camera, /light, /stop_at <printer> - Work on any printer\n"
+    "/forcereclaim <printer> <user> - Give a print to someone else\n"
+    "/restart <printer> [printer ...] - Reboot printers\n"
+    "/restartall - Reboot every printer\n"
+    "/printer list - Show configured printers\n"
+    "/printer add <printer> <mac> <ip> <code> <serial_no> - Add a printer\n"
+    "/printer edit <printer> <mac|ip|code|serial_no> <value> - Change a printer\n"
+    "/printer del <printer> - Remove a printer\n"
+    "/staff edit <mod|user> <user> - Add or remove mods"
+)
+
+OWNER_HELP = (
+    "Owner commands:\n"
+    "/staff edit <admin|mod|user> <user> - Add or remove admins and mods\n"
+    "/staff edit owner <user> - Transfer ownership (you become an admin)\n"
+    "/config - Show chat targets and update interval\n"
+    "/config set <chat_id|status_chat_id|log_chat_id|update_interval> <value> - Change them"
+)
+
+
+def help_text(role: Role) -> str:
+    """Help listing only the commands the user's role can use."""
+    sections = [USER_HELP]
+    if role >= Role.ADMIN:
+        sections.append(ADMIN_HELP)
+    if role == Role.OWNER:
+        sections.append(OWNER_HELP)
+    if role > Role.USER:
+        sections.append(f"Your role: {role.label}")
+    return "\n\n".join(sections)
+
 
 NO_CLAIM = "You don't have an active print claimed."
 SESSION_ENDED = "This print session has ended."

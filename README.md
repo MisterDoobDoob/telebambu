@@ -132,17 +132,38 @@ sudo systemctl start telebambu
 
 ### Telegram Commands
 
-`[printer]` is optional when you have exactly one print claimed.
+`[printer]` is optional when you have exactly one print claimed. Users can be given as `@username`
+(once the bot has seen them), a numeric user id, or by replying to one of their messages.
+`/help` only lists the commands your role can use.
 
-- `/help` - List available commands
-- `/info [printer]` - Show progress, time remaining, layer and pending notifications for your print
-- `/camera [printer]` - Get a fresh camera snapshot (owner can access all printers, users can access their claimed printers)
-- `/light [printer]` - Toggle the printer light (owner or claimer)
-- `/notify [printer] <layer>` or `/notify [printer] <percent>%` - Send a one-time notification with a camera snapshot at a milestone
-- `/notify_every [printer] layers|time|percent <number>` - Send recurring camera snapshots during a print
-- `/notify_every [printer] off` - Disable recurring camera snapshots
+**Everyone**
+- `/help` - List the commands you can use
+- `/info` - Summary of all your claimed and watched prints, in the status message style
+- `/info <printer>` - Progress, time remaining, layer and pending notifications for a print
+- `/claim <printer>` - Claim an unclaimed print without its button
 - `/unclaim [printer]` - Release your claim on a print
-- `/restart <printer>` - Reboot and reconnect a printer (owner only)
+- `/notify [printer] <layer>` or `/notify [printer] <percent>%` - One-time notification with a camera snapshot at a milestone
+- `/notify_every [printer] layers|time|percent <number>` - Recurring camera snapshots during a print (`off` to disable)
+- `/notify_user <printer> <user> [user ...]` - Also notify other users about a claimed print (`remove` to stop, no users to list); the claimer and anyone already notified can use it
+- `/stop_at [printer] <layer>` - Stop the print automatically at a layer (`off` to cancel)
+- `/camera [printer]` - Fresh camera snapshot; in your DM it has a Refresh button
+- `/light [printer]` - Toggle the printer light
+- `/staff [list [user]]` - See the owner, admins and mods, or one user's role
+
+**Admins** (the owner can do all of these too)
+- `/camera`, `/light` and `/stop_at` work on any printer
+- `/forcereclaim <printer> <user>` - Give a print to another user (logged)
+- `/restart <printer> [printer ...]` / `/restartall` - Reboot and reconnect printers
+- `/printer list|add|edit|del` - Manage printers in `config.yml`, e.g. `/printer add 25 AA:BB:CC:DD:EE:FF 192.168.1.125 12345678 SERIAL`, `/printer edit 25 ip 192.168.1.126`
+- `/staff edit <mod|user> <user>` - Add or remove mods
+
+**Owner**
+- `/staff edit <admin|mod|user> <user>` - Add or remove admins and mods
+- `/staff edit owner <user>` - Transfer ownership (asks for confirmation; you become an admin)
+- `/config` / `/config set <key> <value>` - Change `chat_id`, `status_chat_id`, `log_chat_id` or `update_interval`
+
+Role changes, force reclaims, restarts and printer/config changes are posted to the log chat.
+Mods have no extra permissions yet.
 
 ### Interactive Buttons
 
@@ -150,7 +171,7 @@ When a print starts, the bot sends a message with a **Claim Print** button. Clai
 - Receive the finish notification directly
 - Choose between chat or DM delivery
 - Enable/disable Layer 2 progress notifications
-- Access the printer's camera
+- Access the printer's camera, with a Refresh button on images in your DM
 
 ## Project Structure
 

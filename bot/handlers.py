@@ -293,7 +293,7 @@ class BotHandlers:
             print(f'Exception: could not edit main chat message {session.message_id} on /start deep link: {e}')
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.effective_message.reply_text(ui.HELP_TEXT)
+        await update.effective_message.reply_text(ui.help_text(self.storage.get_role(update.effective_user.id)))
 
     async def cmd_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
@@ -1004,7 +1004,7 @@ class BotHandlers:
     async def cb_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        await query.message.reply_text(ui.HELP_TEXT)
+        await query.message.reply_text(ui.help_text(self.storage.get_role(query.from_user.id)))
 
 
 def setup_handlers(app: Application, storage: Storage, message_service: MessageService, printer_manager: PrinterManager,
