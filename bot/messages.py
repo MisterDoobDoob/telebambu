@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -12,27 +10,15 @@ from telegram.error import BadRequest
 
 from data import Storage
 from data.storage import PrintSession
+from errors import lookup_error
 from . import ui
 from .telegram_bot import BotContext
 
 if TYPE_CHECKING:
     from printers.manager import PrinterSnapshot
 
-# Load error codes from JSON
-_ERROR_CODES_FILE = os.path.join(os.path.dirname(__file__), '..', 'error_codes.json')
-with open(_ERROR_CODES_FILE, 'r') as _f:
-    ERROR_CODES: dict[str, str] = json.load(_f)
-
 LOG_THROTTLE = 5  # seconds between messages to the log chat
 FAIL_MESSAGE_TTL = 60 * 60 * 24  # delete failure notifications after 1 day
-
-
-def lookup_error(code) -> str:
-    """Look up an error code and return a human-readable description."""
-    if code is None:
-        return "Unknown error"
-    hex_code = f"{code:08X}" if isinstance(code, int) else str(code).replace("-", "").replace(" ", "")
-    return ERROR_CODES.get(hex_code, f"Unknown error (code: {hex_code})")
 
 
 class MessageService:
@@ -195,6 +181,9 @@ class MessageService:
 
     async def send_stopped_notification(self, printer_num: int, layer: int, image: bytes | None = None):
         await self._notify_claimer(printer_num, f"Printer {printer_num}: Stopping the print at layer {layer} as requested.", image)
+
+    async def send_filament_notification(self, printer_num: int, message: str, image: bytes | None = None):
+        await self._notify_claimer(printer_num, f"Printer {printer_num}: {message}", image)
 
     async def send_custom_layer_notification(self, printer_num: int, image: bytes | None = None):
         session = self.storage.get_print(printer_num)

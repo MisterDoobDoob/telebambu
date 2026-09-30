@@ -9,6 +9,7 @@ A Telegram bot for monitoring and managing a fleet of Bambu Labs 3D printers. Th
 - Users can "claim" print jobs and receive personalized updates
 - Live camera access to view printers
 - Layer 2 progress notifications
+- Low filament (10% or less on the spool in use) and filament run-out alerts to a print's claimer and anyone added with `/notify_user`
 - Persistent status message showing all printer states
 - Configurable notification preferences (chat or DM)
 
@@ -139,7 +140,7 @@ sudo systemctl start telebambu
 **Everyone**
 - `/help` - List the commands you can use
 - `/info` - Summary of all your claimed and watched prints, in the status message style
-- `/info <printer>` - Progress, time remaining, layer, file name, temperatures, speed and pending notifications for a print
+- `/info <printer>` - Progress, time remaining, layer, file name, temperatures, speed, loaded filament (AMS slots and external spool, with % left) and pending notifications for a print
 - `/claim <printer>` - Claim an unclaimed print without its button
 - `/unclaim [printer]` - Release your claim on a print
 - `/notify [printer] <layer>` or `/notify [printer] <percent>%` - One-time notification with a camera snapshot at a milestone

@@ -8,6 +8,8 @@ from bambulabs_api import GcodeState
 
 from .manager import PrinterManager, PrinterEvent, EventType, format_duration, to_int
 
+from errors import is_filament_runout, lookup_error
+
 if TYPE_CHECKING:
     from bot.messages import MessageService
     from settings import Settings
@@ -16,6 +18,8 @@ PRINT_STARTED_DELAY = 2  # seconds to let the printer update its time estimate
 # Don't flag a missing camera frame until this long after a printer connects/restarts,
 # since the camera stream can take a while to establish (TLS handshake, auth, retries)
 CAMERA_STARTUP_GRACE = 30  # seconds
+# Warn the claimer once per tray when the active spool drops to this many percent
+LOW_FILAMENT_PERCENT = 10
 # Only auto-restart printers in these states, so a running print is never interrupted
 NOT_PRINTING_STATES = (GcodeState.IDLE, GcodeState.FINISH)
 
@@ -86,6 +90,7 @@ class PrinterMonitor:
         try:
             await self._check_stale_camera(num)
             await self._check_periodic_camera(num)
+            await self._check_low_filament(num)
         except Exception as e:
             print(f'Error running checks for printer {num}: {e}')
 
@@ -119,6 +124,20 @@ class PrinterMonitor:
         elif has_frame:
             # Camera recovered, clear the flag
             self._stale_camera_reported.discard(num)
+
+    async def _check_low_filament(self, num: int):
+        """Warn a claimed print's users once when the spool in use is nearly empty."""
+        session = self.storage.get_print(num)
+        if not session or not session.claimed_by:
+            return
+        snap = self.pm.snapshot(num)
+        if not snap or snap.state != GcodeState.RUNNING:
+            return
+        tray = next((t for t in self.pm.filament(num) if t.active), None)
+        if not tray or not 0 <= tray.remain <= LOW_FILAMENT_PERCENT or tray.tray_id in session.low_filament_alerted:
+            return
+        self.storage.mark_low_filament_alerted(num, tray.tray_id)
+        await self.ms.send_filament_notification(num, f"Filament is running low ({tray.describe()}).")
 
     async def _check_periodic_camera(self, num: int):
         """Send a recurring camera snapshot when the claimer's configured trigger is due."""
@@ -170,6 +189,9 @@ class PrinterMonitor:
         elif event.type == EventType.PRINT_PAUSED:
             frame = await self.pm.get_camera_frame(num)
             await self.ms.log_message(f'Printer {num} has paused printing. (code: {event.data.get("error_code")})', frame)
+            reason = lookup_error(event.data.get('error_code'))
+            if is_filament_runout(reason):
+                await self.ms.send_filament_notification(num, f"Paused because the filament ran out. {reason}", frame)
 
         elif event.type == EventType.LAYER_CHANGED:
             await self._handle_layer_change(num, event.data['prev_layer'], event.data['layer'])

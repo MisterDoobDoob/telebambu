@@ -35,6 +35,7 @@ class PrintSession:
     watchers: list[int] = field(default_factory=list)  # extra users notified alongside the claimer
     stop_at_layer: Optional[int] = None  # stop the print once it reaches this layer
     stopped_at_layer: Optional[int] = None  # set when the bot stopped the print on request
+    low_filament_alerted: list[int] = field(default_factory=list)  # tray ids already reported as low
 
 
 @dataclass
@@ -232,6 +233,11 @@ class Storage:
 
     def set_stop_at(self, printer_num: int, layer: Optional[int]):
         self._update(printer_num, stop_at_layer=layer)
+
+    def mark_low_filament_alerted(self, printer_num: int, tray_id: int):
+        session = self.active_prints.get(printer_num)
+        if session:
+            self._update(printer_num, low_filament_alerted=session.low_filament_alerted + [tray_id])
 
     def mark_stopped(self, printer_num: int, layer: int):
         self._update(printer_num, stop_at_layer=None, stopped_at_layer=layer)

@@ -23,6 +23,9 @@ DISCONNECT_TIMEOUT = 10  # seconds
 RESTART_TIMEOUT = 30  # seconds
 # Bambu print speed profiles, as reported in spd_lvl and set with the print_speed command
 SPEED_LEVELS = {1: 'silent', 2: 'standard', 3: 'sport', 4: 'ludicrous'}
+# tray_now values that aren't an AMS slot
+EXTERNAL_SPOOL_TRAY = 254
+NO_TRAY = 255
 # States where the printer is not in use
 IDLE_STATES = (GcodeState.IDLE, GcodeState.FINISH, GcodeState.UNKNOWN)
 
@@ -91,6 +94,54 @@ class PrinterDetails:
     chamber_temp: float | None
     speed_level: str
     speed_percent: int
+
+
+@dataclass
+class FilamentTray:
+    """One filament source: an AMS slot or the external spool."""
+    tray_id: int  # global id as used by tray_now: ams * 4 + slot, or 254 for the external spool
+    label: str
+    material: str
+    color: str
+    remain: int  # percent left, or -1 when the printer can't tell (e.g. non-Bambu spools)
+    active: bool = False
+
+    def describe(self) -> str:
+        text = f"{self.label}: {self.material or 'empty'}"
+        if self.color:
+            text += f" {self.color}"
+        if self.remain >= 0:
+            text += f" ({self.remain}% left)"
+        return text
+
+
+def _tray(tray_id: int, label: str, raw: dict, active_id: int) -> FilamentTray:
+    color = str(raw.get('tray_color') or '')
+    return FilamentTray(
+        tray_id=tray_id,
+        label=label,
+        material=str(raw.get('tray_type') or ''),
+        color=f'#{color[:6]}' if len(color) >= 6 else '',
+        remain=to_int(raw.get('remain'), -1),
+        active=tray_id == active_id,
+    )
+
+
+def parse_filament(print_data: dict) -> list[FilamentTray]:
+    """Filament trays from the raw MQTT ``print`` report (bambulabs_api drops the remaining %)."""
+    ams = print_data.get('ams') or {}
+    active_id = to_int(ams.get('tray_now'), NO_TRAY)
+    trays = []
+    for unit in ams.get('ams') or []:
+        ams_id = to_int(unit.get('id'))
+        for raw in unit.get('tray') or []:
+            slot = to_int(raw.get('id'))
+            if raw.get('tray_type'):
+                trays.append(_tray(ams_id * 4 + slot, f'AMS{ams_id + 1} slot {slot + 1}', raw, active_id))
+    external = print_data.get('vt_tray') or {}
+    if external.get('tray_type'):
+        trays.append(_tray(EXTERNAL_SPOOL_TRAY, 'External spool', external, active_id))
+    return trays
 
 
 @dataclass
@@ -309,6 +360,12 @@ class PrinterManager:
     def skip_objects(self, num: int, identify_ids: list[int]) -> bool:
         printer = self.get_online_printer(num)
         return bool(printer and printer.skip_objects(identify_ids))
+
+    def filament(self, num: int) -> list[FilamentTray]:
+        printer = self.get_online_printer(num)
+        if not printer:
+            return []
+        return parse_filament(printer.mqtt_dump().get('print', {}))
 
     # --- State polling ---
 

@@ -329,6 +329,10 @@ class BotHandlers:
             info_text += (f"- Temperatures: nozzle {ui.temp(details.nozzle_temp)}, bed {ui.temp(details.bed_temp)}, "
                           f"chamber {ui.temp(details.chamber_temp)}\n"
                           f"- Speed: {details.speed_level} ({details.speed_percent}%)\n")
+        trays = self.pm.filament(printer_num)
+        if trays:
+            info_text += "- Filament:\n" + "".join(
+                f"  - {tray.describe()}{' (in use)' if tray.active else ''}\n" for tray in trays)
 
         session = self.storage.get_print(printer_num)
         if session and session.notify_layer and not session.notify_layer_notified:
