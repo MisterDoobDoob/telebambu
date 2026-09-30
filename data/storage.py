@@ -155,6 +155,10 @@ class Storage:
         """Printer numbers currently claimed by a user, in ascending order."""
         return sorted(num for num, s in self.active_prints.items() if s.claimed_by == user_id)
 
+    def watched_printers(self, user_id: int) -> list[int]:
+        """Printer numbers whose notifications a user was added to with /notify_user."""
+        return sorted(num for num, s in self.active_prints.items() if user_id in s.watchers)
+
     def claim_print(self, printer_num: int, user_id: int, username: str) -> Optional[PrintSession]:
         changes = {'claimed_by': user_id, 'claimed_username': username}
         # Apply user's default preferences if they exist

@@ -4,6 +4,7 @@ import re
 from dataclasses import replace
 
 from telegram import Update, CallbackQuery, InputFile, MessageEntity
+from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
 
 from data import Role, Storage, can_assign
@@ -293,6 +294,9 @@ class BotHandlers:
         await update.effective_message.reply_text(ui.HELP_TEXT)
 
     async def cmd_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not context.args:
+            await self._info_summary(update)
+            return
         resolved = await self._resolve_printer(update, context.args, usage="Usage: /info <printer>")
         if not resolved:
             return
@@ -324,6 +328,25 @@ class BotHandlers:
             info_text += f"- Recurring snapshots: every {session.notify_every_value} {NOTIFY_EVERY_UNITS[session.notify_every_type]}\n"
 
         await reply(info_text)
+
+    async def _info_summary(self, update: Update):
+        """One status line per print the user claimed or watches, styled like the status message."""
+        user_id = update.effective_user.id
+        claimed = self.storage.claimed_printers(user_id)
+        watched = self.storage.watched_printers(user_id)
+        if not claimed and not watched:
+            await update.effective_message.reply_text(ui.NO_CLAIM)
+            return
+
+        lines = []
+        for num in claimed + watched:
+            session = self.storage.get_print(num)
+            line = self.pm.status_line(num) if num in self.pm else f"{num}: REMOVED"
+            extras = ui.session_extras(session)
+            if num in watched:
+                extras.insert(0, f"watching {session.claimed_username}'s print")
+            lines.append(line + (f" [{'; '.join(extras)}]" if extras else ""))
+        await update.effective_message.reply_text(ui.code_block("Your prints:", lines), parse_mode=ParseMode.MARKDOWN_V2)
 
     async def cmd_notify(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set a layer or percentage to be notified at."""

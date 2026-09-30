@@ -121,3 +121,27 @@ def watchers_text(printer_num: int, session: PrintSession, storage: Storage) -> 
         return (f"Only {session.claimed_username} is notified about Printer {printer_num}. "
                 f"Add others with /notify_user {printer_num} <user>.")
     return f"Printer {printer_num} notifies {session.claimed_username} and: {names}"
+
+
+def session_extras(session: PrintSession) -> list[str]:
+    """Short notes about a print's pending notifications and actions."""
+    extras = []
+    if session.notify_layer and not session.notify_layer_notified:
+        if session.notify_type == "percent":
+            extras.append(f"notify at {session.notify_original_value}%")
+        else:
+            extras.append(f"notify at L{session.notify_layer}")
+    if session.notify_every_type:
+        unit = {"layers": " layers", "time": " min", "percent": "%"}[session.notify_every_type]
+        extras.append(f"snapshot every {session.notify_every_value}{unit}")
+    if session.stop_at_layer:
+        extras.append(f"stop at L{session.stop_at_layer}")
+    if session.watchers:
+        extras.append(f"+{len(session.watchers)} notified")
+    return extras
+
+
+def code_block(title: str, lines: list[str]) -> str:
+    """A MarkdownV2 title and code block, like the status message. Title must not need escaping."""
+    body = "\n".join(lines).replace("\\", "\\\\").replace("`", "\\`")
+    return f"{title}```c\n{body}\n```"
