@@ -10,36 +10,33 @@ from .manager import PrinterManager, PrinterEvent, EventType, format_duration, t
 
 if TYPE_CHECKING:
     from bot.messages import MessageService
+    from settings import Settings
 
-DEFAULT_UPDATE_INTERVAL = 5  # seconds
 PRINT_STARTED_DELAY = 2  # seconds to let the printer update its time estimate
 # Don't flag a missing camera frame until this long after a printer connects/restarts,
 # since the camera stream can take a while to establish (TLS handshake, auth, retries)
 CAMERA_STARTUP_GRACE = 30  # seconds
-DEFAULT_STATS_LOG_INTERVAL = 60 * 60  # seconds between update timing/status reports
 # Only auto-restart printers in these states, so a running print is never interrupted
 NOT_PRINTING_STATES = (GcodeState.IDLE, GcodeState.FINISH)
 
 
 class PrinterMonitor:
-    def __init__(self, printer_manager: PrinterManager, message_service: MessageService, interval: float = DEFAULT_UPDATE_INTERVAL,
-                 auto_restart: bool = True, stats_interval: float | None = DEFAULT_STATS_LOG_INTERVAL):
+    def __init__(self, printer_manager: PrinterManager, message_service: MessageService, settings: Settings):
         self.pm = printer_manager
         self.ms = message_service
         self.storage = message_service.storage
-        self.interval = interval
-        self.auto_restart = auto_restart
+        # Settings are read on every tick, so /config changes apply without a restart
+        self.settings = settings
         # Printers already reported as having a stale camera, to avoid spam
         self._stale_camera_reported: set[int] = set()
         # Time between tick starts, so event loop stalls show up on top of the sleep interval
-        self.stats_interval = stats_interval
         self._stats_since = time.monotonic()
         self._last_tick_at: float | None = None
         self._tick_gaps: list[float] = []
 
     async def run(self):
         while True:
-            await asyncio.sleep(self.interval)
+            await asyncio.sleep(self.settings.update_interval)
             self._record_tick()
             try:
                 await self.log_stats_if_due()
@@ -55,7 +52,8 @@ class PrinterMonitor:
 
     async def log_stats_if_due(self):
         """Log min/avg/max time between updates and every printer's status, then start a new window."""
-        if not self.stats_interval or time.monotonic() - self._stats_since < self.stats_interval:
+        stats_interval = self.settings.stats_log_interval
+        if not stats_interval or time.monotonic() - self._stats_since < stats_interval:
             return
 
         gaps = self._tick_gaps
@@ -110,7 +108,7 @@ class PrinterMonitor:
         if not has_frame and state in NOT_PRINTING_STATES:
             if num not in self._stale_camera_reported:
                 self._stale_camera_reported.add(num)
-                if not self.auto_restart:
+                if not self.settings.auto_restart_printers:
                     await self.ms.log_message(f"Printer {num} has no camera ({state}). Auto-restart disabled, skipping.")
                     return
                 await self.ms.log_message(f"Printer {num} has no camera ({state}). Auto-restarting...")

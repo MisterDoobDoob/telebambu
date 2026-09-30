@@ -96,3 +96,9 @@ def staff_list_text(storage: Storage) -> str:
         names = ", ".join(sorted(storage.display_name(uid) for uid in staff[role])) or "none"
         lines.append(f"- {role.label}: {names}")
     return "\n".join(lines)
+
+
+def config_text(settings, keys) -> str:
+    lines = ["Config (change with /config set <key> <value>):"]
+    lines += [f"- {key}: {getattr(settings, key)}" for key in keys]
+    return "\n".join(lines)

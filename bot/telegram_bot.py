@@ -1,7 +1,7 @@
 from telegram.ext import Application
 from dataclasses import dataclass
 
-import config as cfg
+from settings import Settings
 
 
 @dataclass
@@ -41,15 +41,15 @@ def parse_chat_id(chat_id_str: str | None) -> tuple[str | None, int | None]:
     return parts[0], int(parts[1])
 
 
-def create_application() -> Application:
+def create_application(settings: Settings) -> Application:
     # Concurrent updates so a slow command (e.g. /camera waiting for a frame) doesn't block others
-    return Application.builder().token(cfg.TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+    return Application.builder().token(settings.telegram_bot_token).concurrent_updates(True).build()
 
 
-def get_bot_context() -> BotContext:
-    chat_id, thread_id = parse_chat_id(cfg.CHAT_ID)
-    status_chat_id, status_thread_id = parse_chat_id(cfg.STATUS_CHAT_ID)
-    log_chat_id, log_thread_id = parse_chat_id(cfg.LOG_CHAT_ID)
+def get_bot_context(settings: Settings) -> BotContext:
+    chat_id, thread_id = parse_chat_id(settings.chat_id)
+    status_chat_id, status_thread_id = parse_chat_id(settings.status_chat_id)
+    log_chat_id, log_thread_id = parse_chat_id(settings.log_chat_id)
 
     return BotContext(
         chat_id=chat_id,

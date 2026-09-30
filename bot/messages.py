@@ -226,6 +226,11 @@ class MessageService:
 
     # --- Status message ---
 
+    def reset_status_message(self):
+        """Forget the status message, e.g. after the status chat changes, so a new one is posted."""
+        self.storage.set_status_message_id(None)
+        self._prev_status_message = ''
+
     async def update_status_message(self, message: str):
         if message == self._prev_status_message:
             return

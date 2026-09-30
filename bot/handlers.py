@@ -7,10 +7,16 @@ from data import Role, Storage, can_assign
 from printers import PrinterManager
 from . import ui
 from .messages import MessageService
+from .telegram_bot import get_bot_context, parse_chat_id
+from settings import Settings
 
 NOTIFY_USAGE = "Usage: /notify [printer] <layer> or /notify [printer] <percent>%"
 NOTIFY_EVERY_USAGE = "Usage: /notify_every [printer] layers <number>, time <minutes>, percent <number>, or off"
 NOTIFY_EVERY_UNITS = {"layers": "layers", "time": "minutes", "percent": "%"}
+CONFIG_USAGE = "Usage: /config or /config set <chat_id|status_chat_id|log_chat_id|update_interval> <value>"
+# Settings the owner can change at runtime; chat targets are 'chat_id' or 'chat_id/thread_id'
+CONFIG_KEYS = ("chat_id", "status_chat_id", "log_chat_id", "update_interval")
+MIN_UPDATE_INTERVAL = 1  # seconds
 STAFF_USAGE = "Usage: /staff list [user] or /staff edit <owner|admin|mod|user> <user>"
 
 
@@ -37,10 +43,12 @@ def _callback_pattern(action: str, legacy_action: str, option: str = "") -> str:
 
 
 class BotHandlers:
-    def __init__(self, storage: Storage, message_service: MessageService, printer_manager: PrinterManager):
+    def __init__(self, storage: Storage, message_service: MessageService, printer_manager: PrinterManager,
+                 settings: Settings):
         self.storage = storage
         self.ms = message_service
         self.pm = printer_manager
+        self.settings = settings
 
     def register(self, app: Application):
         # Runs before every other handler so @usernames can be resolved later
@@ -57,6 +65,7 @@ class BotHandlers:
             "unclaim": self.cmd_unclaim,
             "restart": self.cmd_restart,
             "staff": self.cmd_staff,
+            "config": self.cmd_config,
         }
         for name, callback in commands.items():
             app.add_handler(CommandHandler(name, callback))
@@ -496,6 +505,52 @@ class BotHandlers:
         await self.ms.log_message(f"Role change: {actor_name} changed {name} from {current.label} to {new_role.label}.")
         await reply(f"{name} is now {new_role.label}.")
 
+    async def cmd_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Owner only: show or change chat targets and the update interval."""
+        reply = update.effective_message.reply_text
+        if self.storage.get_role(update.effective_user.id) != Role.OWNER:
+            await reply("Only the owner can use this command.")
+            return
+
+        args = context.args
+        if not args:
+            await reply(ui.config_text(self.settings, CONFIG_KEYS))
+            return
+        if args[0].lower() != "set" or len(args) != 3 or args[1].lower() not in CONFIG_KEYS:
+            await reply(CONFIG_USAGE)
+            return
+
+        key, raw = args[1].lower(), args[2]
+        if key == "update_interval":
+            try:
+                value = float(raw)
+            except ValueError:
+                value = 0
+            if value < MIN_UPDATE_INTERVAL:
+                await reply(f"update_interval must be a number of seconds, at least {MIN_UPDATE_INTERVAL}.")
+                return
+            value = int(value) if value.is_integer() else value
+        elif key == "log_chat_id" and raw.lower() in ("none", "off"):
+            value = None
+        else:
+            try:
+                parse_chat_id(raw)
+            except ValueError as e:
+                await reply(str(e))
+                return
+            value = raw
+
+        old = getattr(self.settings, key)
+        setattr(self.settings, key, value)
+        self.settings.save()
+        # Point outgoing messages at the new chats straight away
+        self.ms.ctx = get_bot_context(self.settings)
+        if key == "status_chat_id":
+            self.ms.reset_status_message()
+        await self.ms.log_message(f"Config change: {self.storage.display_name(update.effective_user.id)} "
+                                  f"set {key} from {old} to {value}.")
+        await reply(f"{key} set to {value}.")
+
     # --- Callback buttons ---
 
     async def cb_claim(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -579,5 +634,6 @@ class BotHandlers:
         await query.message.reply_text(ui.HELP_TEXT)
 
 
-def setup_handlers(app: Application, storage: Storage, message_service: MessageService, printer_manager: PrinterManager):
-    BotHandlers(storage, message_service, printer_manager).register(app)
+def setup_handlers(app: Application, storage: Storage, message_service: MessageService, printer_manager: PrinterManager,
+                   settings: Settings):
+    BotHandlers(storage, message_service, printer_manager, settings).register(app)

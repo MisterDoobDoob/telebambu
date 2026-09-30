@@ -7,6 +7,8 @@ from enum import Enum, auto
 import bambulabs_api as bl
 from bambulabs_api import GcodeState, PrintStatus, Printer
 
+from settings import PrinterConfig
+
 # How long to wait for a fresh camera frame after turning the light on
 CAMERA_POLL_INTERVAL = 2  # seconds
 CAMERA_MAX_POLLS = 10
@@ -91,11 +93,10 @@ class PrinterSlot:
 class PrinterManager:
     """Printers are identified by their 1-based printer number everywhere."""
 
-    def __init__(self, printer_configs: list):
-        # Config tuples are (name, mac, ip, access_code, serial); the Nth entry is Printer N
+    def __init__(self, printer_configs: dict[int, PrinterConfig]):
         self.slots: dict[int, PrinterSlot] = {
-            num: PrinterSlot(ip=ip, access_code=code, serial=serial, mac=mac)
-            for num, (_name, mac, ip, code, serial) in enumerate(printer_configs, start=1)
+            num: PrinterSlot(ip=c.ip, access_code=c.access_code, serial=c.serial, mac=c.mac)
+            for num, c in printer_configs.items()
         }
         self._logged_disconnected: set[int] = set()
 

@@ -41,34 +41,27 @@ A Telegram bot for monitoring and managing a fleet of Bambu Labs 3D printers. Th
 
 1. Copy the example configuration file:
    ```bash
-   cp config_example.py config.py
+   cp config_example.yml config.yml
    ```
 
-2. Edit `config.py` with your settings:
+2. Edit `config.yml` with your bot token, chat IDs, owner ID and printers. See the comments in
+   `config_example.yml` for what each setting does. Printers are listed by number:
 
-   ```python
-   # Telegram Chat IDs
-   # Format: 'chat_id' or 'chat_id/thread_id' if using forum threads
-   LOG_CHAT_ID = '1234567890'        # Chat/topic for logging (set to None to disable)
-   CHAT_ID = '1234567890/1234'       # Main chat for print updates
-   STATUS_CHAT_ID = '1234567890/1234' # Chat for status messages
-
-   # Bot owner user ID (can use /camera command for any printer)
-   OWNER_ID = 1234567890
-
-   # Your Telegram bot token from @BotFather
-   TELEGRAM_BOT_TOKEN = '1234567890:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-
-   # Update interval in seconds
-   UPDATE_INTERVAL = 3
-
-   # Printer configuration
-   # Format: (display_name, mac_address, ip_address, access_code, serial_number)
-   PRINTERS = [
-       ('1', 'AA:BB:CC:DD:EE:FF', '192.168.1.123', '12345678', '0123456789ABCDE'),
-       ('2', '00:11:22:33:44:55', '192.168.1.124', '12345679', '123456789ABCDEF'),
-   ]
+   ```yaml
+   printers:
+     1:
+       mac: 'AA:BB:CC:DD:EE:FF'
+       ip: '192.168.1.123'
+       access_code: '12345678'
+       serial: '0123456789ABCDE'
    ```
+
+   Upgrading from `config.py`? Start the bot once without a `config.yml` and it will create one
+   from your `config.py`, which can then be deleted.
+
+   The owner can change `chat_id`, `status_chat_id`, `log_chat_id` and `update_interval` at runtime
+   with `/config`. The bot rewrites `config.yml` when settings change, so hand-written comments
+   are not kept.
 
    **Finding your printer information:**
    - **IP Address**: Check your router's DHCP client list or the printer's network settings
@@ -164,8 +157,9 @@ When a print starts, the bot sends a message with a **Claim Print** button. Clai
 ```
 telebambu/
 ├── main.py              # Application entry point
-├── config.py            # Configuration (create from config_example.py)
-├── config_example.py    # Configuration template
+├── settings.py          # Loads and saves config.yml
+├── config.yml           # Configuration (create from config_example.yml)
+├── config_example.yml   # Configuration template
 ├── requirements.txt     # Python dependencies
 ├── start.sh             # Shell script to run the bot
 ├── bot/                 # Telegram bot module
