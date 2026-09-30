@@ -87,15 +87,16 @@ class MessageService:
 
     # --- Print lifecycle ---
 
-    async def send_print_started(self, printer_num: int, print_time: str, total_layers: int = 0) -> int:
+    async def send_print_started(self, printer_num: int, print_time: str, total_layers: int = 0,
+                                 file_name: str | None = None) -> int:
         await self._delete_started_message(self.storage.get_print(printer_num))
 
         # Build the text from a provisional session so it matches later edits (unclaim etc.)
         draft = PrintSession(message_id=0, chat_id=self.ctx.chat_id, printer_num=printer_num,
-                             print_time=print_time, total_layers=total_layers)
+                             print_time=print_time, total_layers=total_layers, file_name=file_name)
         msg = await self._send_main(ui.started_text(printer_num, draft), reply_markup=ui.claim_keyboard(printer_num))
 
-        self.storage.start_print(printer_num, msg.message_id, self.ctx.chat_id, print_time, total_layers)
+        self.storage.start_print(printer_num, msg.message_id, self.ctx.chat_id, print_time, total_layers, file_name)
         return msg.message_id
 
     async def send_print_finished(self, printer_num: int, image: bytes | None):

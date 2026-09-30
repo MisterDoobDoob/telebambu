@@ -157,7 +157,8 @@ class PrinterMonitor:
 
         elif event.type == EventType.PRINT_STARTED:
             await asyncio.sleep(PRINT_STARTED_DELAY)
-            await self.ms.send_print_started(num, format_duration(printer.get_time()), to_int(printer.total_layer_num()))
+            await self.ms.send_print_started(num, format_duration(printer.get_time()), to_int(printer.total_layer_num()),
+                                             self.pm.file_name(num) or None)
 
         elif event.type == EventType.PRINT_FINISHED:
             await self.ms.send_print_finished(num, await self.pm.get_camera_frame(num))

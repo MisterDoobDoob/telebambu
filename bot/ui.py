@@ -66,7 +66,7 @@ CLAIM_DM_PROMPT = "Where would you like to receive the finished print image?"
 
 
 def _print_details(session: PrintSession) -> str:
-    details = []
+    details = [f"file: {session.file_name}"] if session.file_name else []
     if session.print_time:
         details.append(f"time: {session.print_time}")
     if session.total_layers:
@@ -199,3 +199,8 @@ def code_block(title: str, lines: list[str]) -> str:
     """A MarkdownV2 title and code block, like the status message. Title must not need escaping."""
     body = "\n".join(lines).replace("\\", "\\\\").replace("`", "\\`")
     return f"{title}```c\n{body}\n```"
+
+
+def temp(value) -> str:
+    """Format a temperature reading, which the printer may not report."""
+    return f"{value:.0f}°C" if isinstance(value, (int, float)) else "n/a"

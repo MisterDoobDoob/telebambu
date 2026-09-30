@@ -22,6 +22,7 @@ class PrintSession:
     layer2_notify: bool = True
     layer2_notified: bool = False
     print_time: Optional[str] = None
+    file_name: Optional[str] = None
     total_layers: int = 0
     notify_layer: Optional[int] = None
     notify_layer_notified: bool = False
@@ -131,13 +132,14 @@ class Storage:
     # --- Session lifecycle ---
 
     def start_print(self, printer_num: int, message_id: int, chat_id: str,
-                    print_time: str = None, total_layers: int = 0) -> PrintSession:
+                    print_time: str = None, total_layers: int = 0, file_name: str = None) -> PrintSession:
         session = PrintSession(
             message_id=message_id,
             chat_id=chat_id,
             printer_num=printer_num,
             print_time=print_time,
             total_layers=total_layers,
+            file_name=file_name,
         )
         self.active_prints[printer_num] = session
         self._save()
@@ -178,6 +180,7 @@ class Storage:
             printer_num=printer_num,
             print_time=session.print_time,
             total_layers=session.total_layers,
+            file_name=session.file_name,
         )
         self._save()
         return self.active_prints[printer_num]

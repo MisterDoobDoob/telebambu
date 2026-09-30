@@ -20,6 +20,8 @@ PRE_PRINT_STATES = (GcodeState.FINISH, GcodeState.IDLE, GcodeState.PREPARE)
 DISCONNECT_TIMEOUT = 10  # seconds
 # How long a reboot + reconnect may take before it is reported as failed
 RESTART_TIMEOUT = 30  # seconds
+# Bambu print speed profiles, as reported in spd_lvl and set with the print_speed command
+SPEED_LEVELS = {1: 'silent', 2: 'standard', 3: 'sport', 4: 'ludicrous'}
 # States where the printer is not in use
 IDLE_STATES = (GcodeState.IDLE, GcodeState.FINISH, GcodeState.UNKNOWN)
 
@@ -77,6 +79,17 @@ class PrinterSnapshot:
     time_left: str
     layer: int
     total_layers: int
+
+
+@dataclass
+class PrinterDetails:
+    """Extra information shown by /info for a single printer."""
+    file_name: str
+    nozzle_temp: float | None
+    bed_temp: float | None
+    chamber_temp: float | None
+    speed_level: str
+    speed_percent: int
 
 
 @dataclass
@@ -236,6 +249,28 @@ class PrinterManager:
             time_left=format_duration(printer.get_time()),
             layer=to_int(printer.current_layer_num()),
             total_layers=to_int(printer.total_layer_num()),
+        )
+
+    def file_name(self, num: int) -> str:
+        """Name of the current (or last) print: the project name, falling back to the gcode file."""
+        printer = self.get_online_printer(num)
+        if not printer:
+            return ''
+        name = printer.subtask_name() or printer.get_file_name() or ''
+        return name.rsplit('/', 1)[-1]
+
+    def details(self, num: int) -> PrinterDetails | None:
+        printer = self.get_online_printer(num)
+        if not printer:
+            return None
+        level = to_int(printer.mqtt_dump().get('print', {}).get('spd_lvl'))
+        return PrinterDetails(
+            file_name=self.file_name(num),
+            nozzle_temp=printer.get_nozzle_temperature(),
+            bed_temp=printer.get_bed_temperature(),
+            chamber_temp=printer.get_chamber_temperature(),
+            speed_level=SPEED_LEVELS.get(level, 'unknown'),
+            speed_percent=to_int(printer.get_print_speed()),
         )
 
     # --- State polling ---
