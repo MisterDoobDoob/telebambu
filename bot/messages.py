@@ -88,40 +88,40 @@ class MessageService:
 
     # --- Print lifecycle ---
 
-    async def send_print_started(self, printer_index: int, print_time: str, total_layers: int = 0) -> int:
-        await self._delete_started_message(self.storage.get_print(printer_index))
+    async def send_print_started(self, printer_num: int, print_time: str, total_layers: int = 0) -> int:
+        await self._delete_started_message(self.storage.get_print(printer_num))
 
         # Build the text from a provisional session so it matches later edits (unclaim etc.)
-        draft = PrintSession(message_id=0, chat_id=self.ctx.chat_id, printer_index=printer_index,
+        draft = PrintSession(message_id=0, chat_id=self.ctx.chat_id, printer_num=printer_num,
                              print_time=print_time, total_layers=total_layers)
-        msg = await self._send_main(ui.started_text(printer_index, draft), reply_markup=ui.claim_keyboard(printer_index))
+        msg = await self._send_main(ui.started_text(printer_num, draft), reply_markup=ui.claim_keyboard(printer_num))
 
-        self.storage.start_print(printer_index, msg.message_id, self.ctx.chat_id, print_time, total_layers)
+        self.storage.start_print(printer_num, msg.message_id, self.ctx.chat_id, print_time, total_layers)
         return msg.message_id
 
-    async def send_print_finished(self, printer_index: int, image: bytes | None):
-        session = self.storage.get_print(printer_index)
+    async def send_print_finished(self, printer_num: int, image: bytes | None):
+        session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
         if session and session.claimed_by:
-            message = f"Printer {printer_index + 1} has finished printing. ({session.claimed_username})"
+            message = f"Printer {printer_num} has finished printing. ({session.claimed_username})"
         else:
-            message = f"Printer {printer_index + 1} has finished printing."
+            message = f"Printer {printer_num} has finished printing."
 
         if session and session.claimed_by and session.dm_preference == "dm":
             await self._send(session.claimed_by, message, image)
         else:
             await self._send_main(message, image)
 
-        self.storage.end_print(printer_index)
+        self.storage.end_print(printer_num)
 
-    async def send_print_failed(self, printer_index: int, error_code, image: bytes | None = None):
+    async def send_print_failed(self, printer_num: int, error_code, image: bytes | None = None):
         """Send print failure notification to the print owner (if claimed) and bot owner.
         Deletes the 'started printing' message and cleans up the session."""
-        session = self.storage.get_print(printer_index)
+        session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
-        message = f"Printer {printer_index + 1} failed!\n{lookup_error(error_code)}"
+        message = f"Printer {printer_num} failed!\n{lookup_error(error_code)}"
         targets = []  # (chat_id, thread_id, label)
 
         # Notify the print owner (claimer) based on their DM preference
@@ -144,7 +144,7 @@ class MessageService:
                 print(f'Failed to send fail notification to {label}: {e}')
 
         if session:
-            self.storage.end_print(printer_index)
+            self.storage.end_print(printer_num)
 
         # Delete fail messages after a delay so users can read them
         async def _delete_later():
@@ -156,30 +156,30 @@ class MessageService:
 
     # --- Claimer notifications (sent to the claimer's DM) ---
 
-    async def _notify_claimer(self, printer_index: int, message: str, image: bytes | None):
-        session = self.storage.get_print(printer_index)
+    async def _notify_claimer(self, printer_num: int, message: str, image: bytes | None):
+        session = self.storage.get_print(printer_num)
         if session and session.claimed_by:
-            await self._send(session.claimed_by, message, image, reply_markup=ui.unclaim_keyboard(printer_index))
+            await self._send(session.claimed_by, message, image, reply_markup=ui.unclaim_keyboard(printer_num))
 
-    async def send_layer2_notification(self, printer_index: int, image: bytes | None = None):
+    async def send_layer2_notification(self, printer_num: int, image: bytes | None = None):
         await self._notify_claimer(
-            printer_index, f"Printer {printer_index + 1}: Layer 2 complete! Your print is progressing well.", image)
-        self.storage.mark_layer2_notified(printer_index)
+            printer_num, f"Printer {printer_num}: Layer 2 complete! Your print is progressing well.", image)
+        self.storage.mark_layer2_notified(printer_num)
 
-    async def send_custom_layer_notification(self, printer_index: int, image: bytes | None = None):
-        session = self.storage.get_print(printer_index)
+    async def send_custom_layer_notification(self, printer_num: int, image: bytes | None = None):
+        session = self.storage.get_print(printer_num)
         if not session:
             return
         if session.notify_type == "percent":
-            message = f"Printer {printer_index + 1}: {session.notify_original_value}% reached!"
+            message = f"Printer {printer_num}: {session.notify_original_value}% reached!"
         else:
-            message = f"Printer {printer_index + 1}: Layer {session.notify_layer} reached!"
-        await self._notify_claimer(printer_index, message, image)
-        self.storage.mark_notify_layer_notified(printer_index)
+            message = f"Printer {printer_num}: Layer {session.notify_layer} reached!"
+        await self._notify_claimer(printer_num, message, image)
+        self.storage.mark_notify_layer_notified(printer_num)
 
-    async def send_periodic_camera_notification(self, printer_index: int, snap: PrinterSnapshot,
+    async def send_periodic_camera_notification(self, printer_num: int, snap: PrinterSnapshot,
                                                 trigger_value: int | None = None, image: bytes | None = None):
-        session = self.storage.get_print(printer_index)
+        session = self.storage.get_print(printer_num)
         if not session:
             return
         if session.notify_every_type == "layers":
@@ -190,8 +190,8 @@ class MessageService:
             detail = f"layer {snap.layer}/{snap.total_layers}, {snap.progress}% complete"
 
         suffix = "" if image else " Camera frame unavailable."
-        await self._notify_claimer(printer_index, f"Printer {printer_index + 1}: Camera update ({detail}).{suffix}", image)
-        self.storage.mark_notify_every_sent(printer_index, trigger_value)
+        await self._notify_claimer(printer_num, f"Printer {printer_num}: Camera update ({detail}).{suffix}", image)
+        self.storage.mark_notify_every_sent(printer_num, trigger_value)
 
     # --- Log chat ---
 

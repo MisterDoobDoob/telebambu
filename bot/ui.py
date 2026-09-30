@@ -31,48 +31,47 @@ def _print_details(session: PrintSession) -> str:
     return f" ({', '.join(details)})" if details else ""
 
 
-def started_text(printer_index: int, session: PrintSession) -> str:
+def started_text(printer_num: int, session: PrintSession) -> str:
     """Main chat text for an unclaimed print."""
-    return f"Printer {printer_index + 1} has started printing.{_print_details(session)}"
+    return f"Printer {printer_num} has started printing.{_print_details(session)}"
 
 
-def claimed_text(printer_index: int, session: PrintSession) -> str:
+def claimed_text(printer_num: int, session: PrintSession) -> str:
     """Main chat text for a claimed print."""
-    return f"Printer {printer_index + 1} started by {session.claimed_username}{_print_details(session)}"
+    return f"Printer {printer_num} started by {session.claimed_username}{_print_details(session)}"
 
 
-def claim_keyboard(printer_index: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Claim Print", callback_data=f"claim_{printer_index}")]])
+def claim_keyboard(printer_num: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Claim Print", callback_data=f"claim:{printer_num}")]])
 
 
-def unclaim_keyboard(printer_index: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim_{printer_index}")]])
+def unclaim_keyboard(printer_num: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim:{printer_num}")]])
 
 
-def start_dm_keyboard(bot_username: str, printer_index: int) -> InlineKeyboardMarkup:
-    url = f"https://t.me/{bot_username}?start=claim_{printer_index}"
+def start_dm_keyboard(bot_username: str, printer_num: int) -> InlineKeyboardMarkup:
+    url = f"https://t.me/{bot_username}?start=claim-{printer_num}"
     return InlineKeyboardMarkup([[InlineKeyboardButton("Start DM with bot", url=url)]])
 
 
-def _unclaim_help_row(printer_index: int) -> list[InlineKeyboardButton]:
+def _unclaim_help_row(printer_num: int) -> list[InlineKeyboardButton]:
     return [
-        InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim_{printer_index}"),
+        InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim:{printer_num}"),
         InlineKeyboardButton("Help", callback_data="help"),
     ]
 
 
-def dm_preference_keyboard(printer_index: int) -> InlineKeyboardMarkup:
+def dm_preference_keyboard(printer_num: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Main Chat (Recommended)", callback_data=f"dm_pref_{printer_index}_chat"),
-            InlineKeyboardButton("Send to DM only", callback_data=f"dm_pref_{printer_index}_dm"),
+            InlineKeyboardButton("Main Chat (Recommended)", callback_data=f"dmpref:{printer_num}:chat"),
+            InlineKeyboardButton("Send to DM only", callback_data=f"dmpref:{printer_num}:dm"),
         ],
-        _unclaim_help_row(printer_index),
+        _unclaim_help_row(printer_num),
     ])
 
 
-def settings_message(printer_index: int, session: PrintSession) -> tuple[str, InlineKeyboardMarkup]:
-    printer_num = printer_index + 1
+def settings_message(printer_num: int, session: PrintSession) -> tuple[str, InlineKeyboardMarkup]:
     destination = "main chat" if session.dm_preference == "chat" else "here privately"
     layer2_status = "ON" if session.layer2_notify else "OFF"
 
@@ -83,7 +82,7 @@ def settings_message(printer_index: int, session: PrintSession) -> tuple[str, In
         f"You can use /camera {printer_num} to check on your print while it's active."
     )
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"Layer 2 Notify: {layer2_status}", callback_data=f"layer2_toggle_{printer_index}")],
-        _unclaim_help_row(printer_index),
+        [InlineKeyboardButton(f"Layer 2 Notify: {layer2_status}", callback_data=f"layer2:{printer_num}")],
+        _unclaim_help_row(printer_num),
     ])
     return text, keyboard

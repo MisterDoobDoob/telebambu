@@ -5,13 +5,15 @@ from dataclasses import dataclass, asdict, fields
 from typing import Optional
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'data.json')
+# Bumped when data.json's layout changes; older files are migrated on load
+DATA_VERSION = 2
 
 
 @dataclass
 class PrintSession:
     message_id: int
     chat_id: str
-    printer_index: int
+    printer_num: int
     claimed_by: Optional[int] = None
     claimed_username: Optional[str] = None
     dm_preference: str = "chat"  # "chat" or "dm"
@@ -41,9 +43,20 @@ def _from_dict(cls, data: dict):
     return cls(**{k: v for k, v in data.items() if k in known})
 
 
+def _migrate_to_1_based(data: dict):
+    """Version 1 keyed prints by 0-based printer index; renumber them to 1-based printer numbers."""
+    prints = {}
+    for idx, session in data.get('active_prints', {}).items():
+        num = int(idx) + 1
+        session.pop('printer_index', None)
+        session['printer_num'] = num
+        prints[str(num)] = session
+    data['active_prints'] = prints
+
+
 class Storage:
     def __init__(self):
-        self.active_prints: dict[int, PrintSession] = {}  # printer_index -> PrintSession
+        self.active_prints: dict[int, PrintSession] = {}  # printer number (1-based) -> PrintSession
         self.user_preferences: dict[int, UserPreferences] = {}  # user_id -> UserPreferences
         self.status_message_id: Optional[int] = None
         self._load()
@@ -55,8 +68,11 @@ class Storage:
             with open(DATA_FILE, 'r') as f:
                 data = json.load(f)
 
-            for idx, session_data in data.get('active_prints', {}).items():
-                self.active_prints[int(idx)] = _from_dict(PrintSession, session_data)
+            if data.get('version', 1) < 2:
+                _migrate_to_1_based(data)
+
+            for num, session_data in data.get('active_prints', {}).items():
+                self.active_prints[int(num)] = _from_dict(PrintSession, session_data)
 
             for user_id, prefs_data in data.get('user_preferences', {}).items():
                 self.user_preferences[int(user_id)] = _from_dict(UserPreferences, prefs_data)
@@ -67,7 +83,8 @@ class Storage:
 
     def _save(self):
         data = {
-            'active_prints': {str(idx): asdict(s) for idx, s in self.active_prints.items()},
+            'version': DATA_VERSION,
+            'active_prints': {str(num): asdict(s) for num, s in self.active_prints.items()},
             'user_preferences': {str(uid): asdict(p) for uid, p in self.user_preferences.items()},
             'status_message_id': self.status_message_id,
         }
@@ -77,9 +94,9 @@ class Storage:
             json.dump(data, f, indent=2)
         os.replace(tmp_file, DATA_FILE)
 
-    def _update(self, printer_index: int, **changes) -> Optional[PrintSession]:
+    def _update(self, printer_num: int, **changes) -> Optional[PrintSession]:
         """Apply field changes to an active session and persist. No-op if there is no session."""
-        session = self.active_prints.get(printer_index)
+        session = self.active_prints.get(printer_num)
         if session:
             for key, value in changes.items():
                 setattr(session, key, value)
@@ -91,108 +108,108 @@ class Storage:
 
     # --- Session lifecycle ---
 
-    def start_print(self, printer_index: int, message_id: int, chat_id: str,
+    def start_print(self, printer_num: int, message_id: int, chat_id: str,
                     print_time: str = None, total_layers: int = 0) -> PrintSession:
         session = PrintSession(
             message_id=message_id,
             chat_id=chat_id,
-            printer_index=printer_index,
+            printer_num=printer_num,
             print_time=print_time,
             total_layers=total_layers,
         )
-        self.active_prints[printer_index] = session
+        self.active_prints[printer_num] = session
         self._save()
         return session
 
-    def end_print(self, printer_index: int) -> Optional[PrintSession]:
-        session = self.active_prints.pop(printer_index, None)
+    def end_print(self, printer_num: int) -> Optional[PrintSession]:
+        session = self.active_prints.pop(printer_num, None)
         self._save()
         return session
 
-    def get_print(self, printer_index: int) -> Optional[PrintSession]:
-        return self.active_prints.get(printer_index)
+    def get_print(self, printer_num: int) -> Optional[PrintSession]:
+        return self.active_prints.get(printer_num)
 
     def claimed_printers(self, user_id: int) -> list[int]:
-        """Printer indices currently claimed by a user, in ascending order."""
-        return sorted(idx for idx, s in self.active_prints.items() if s.claimed_by == user_id)
+        """Printer numbers currently claimed by a user, in ascending order."""
+        return sorted(num for num, s in self.active_prints.items() if s.claimed_by == user_id)
 
-    def claim_print(self, printer_index: int, user_id: int, username: str) -> Optional[PrintSession]:
+    def claim_print(self, printer_num: int, user_id: int, username: str) -> Optional[PrintSession]:
         changes = {'claimed_by': user_id, 'claimed_username': username}
         # Apply user's default preferences if they exist
         prefs = self.user_preferences.get(user_id)
         if prefs:
             changes.update(dm_preference=prefs.default_dm_preference, layer2_notify=prefs.layer2_notify)
-        return self._update(printer_index, **changes)
+        return self._update(printer_num, **changes)
 
-    def unclaim_print(self, printer_index: int) -> Optional[PrintSession]:
+    def unclaim_print(self, printer_num: int) -> Optional[PrintSession]:
         """Reset a session to its unclaimed state, keeping only the print's own details."""
-        session = self.active_prints.get(printer_index)
+        session = self.active_prints.get(printer_num)
         if not session:
             return None
-        self.active_prints[printer_index] = PrintSession(
+        self.active_prints[printer_num] = PrintSession(
             message_id=session.message_id,
             chat_id=session.chat_id,
-            printer_index=printer_index,
+            printer_num=printer_num,
             print_time=session.print_time,
             total_layers=session.total_layers,
         )
         self._save()
-        return self.active_prints[printer_index]
+        return self.active_prints[printer_num]
 
     # --- Claimer preferences (also saved as the user's defaults) ---
 
-    def set_dm_preference(self, printer_index: int, preference: str):
-        session = self.active_prints.get(printer_index)
+    def set_dm_preference(self, printer_num: int, preference: str):
+        session = self.active_prints.get(printer_num)
         if session and session.claimed_by:
             self._user_prefs(session.claimed_by).default_dm_preference = preference
-        self._update(printer_index, dm_preference=preference)
+        self._update(printer_num, dm_preference=preference)
 
-    def set_layer2_notify(self, printer_index: int, enabled: bool):
-        session = self.active_prints.get(printer_index)
+    def set_layer2_notify(self, printer_num: int, enabled: bool):
+        session = self.active_prints.get(printer_num)
         if session and session.claimed_by:
             self._user_prefs(session.claimed_by).layer2_notify = enabled
-        self._update(printer_index, layer2_notify=enabled)
+        self._update(printer_num, layer2_notify=enabled)
 
     # --- Notifications ---
 
-    def mark_layer2_notified(self, printer_index: int):
-        self._update(printer_index, layer2_notified=True)
+    def mark_layer2_notified(self, printer_num: int):
+        self._update(printer_num, layer2_notified=True)
 
-    def set_notify_layer(self, printer_index: int, layer: int, notify_type: str = "layer", original_value: int = None):
+    def set_notify_layer(self, printer_num: int, layer: int, notify_type: str = "layer", original_value: int = None):
         self._update(
-            printer_index,
+            printer_num,
             notify_layer=layer,
             notify_layer_notified=False,
             notify_type=notify_type,
             notify_original_value=original_value if original_value is not None else layer,
         )
 
-    def mark_notify_layer_notified(self, printer_index: int):
-        self._update(printer_index, notify_layer_notified=True)
+    def mark_notify_layer_notified(self, printer_num: int):
+        self._update(printer_num, notify_layer_notified=True)
 
-    def set_notify_every(self, printer_index: int, notify_type: str, value: int, initial_value: int = 0):
+    def set_notify_every(self, printer_num: int, notify_type: str, value: int, initial_value: int = 0):
         self._update(
-            printer_index,
+            printer_num,
             notify_every_type=notify_type,
             notify_every_value=value,
             notify_every_last_value=initial_value,
             notify_every_last_sent_at=time.time() if notify_type == "time" else None,
         )
 
-    def clear_notify_every(self, printer_index: int):
+    def clear_notify_every(self, printer_num: int):
         self._update(
-            printer_index,
+            printer_num,
             notify_every_type=None,
             notify_every_value=None,
             notify_every_last_value=None,
             notify_every_last_sent_at=None,
         )
 
-    def mark_notify_every_sent(self, printer_index: int, value: int = None):
+    def mark_notify_every_sent(self, printer_num: int, value: int = None):
         changes = {'notify_every_last_sent_at': time.time()}
         if value is not None:
             changes['notify_every_last_value'] = value
-        self._update(printer_index, **changes)
+        self._update(printer_num, **changes)
 
     # --- Status message ---
 

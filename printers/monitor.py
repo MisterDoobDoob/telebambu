@@ -80,54 +80,54 @@ class PrinterMonitor:
             print(f'Failed to update status message: {e}')
 
         # Printers are independent, so a slow camera capture on one doesn't hold up the rest
-        await asyncio.gather(*(self._process_printer(i) for i in range(len(self.pm))))
+        await asyncio.gather(*(self._process_printer(num) for num in self.pm.numbers()))
 
         await self.ms.flush_logs()
 
-    async def _process_printer(self, i: int):
+    async def _process_printer(self, num: int):
         try:
-            await self._check_stale_camera(i)
-            await self._check_periodic_camera(i)
+            await self._check_stale_camera(num)
+            await self._check_periodic_camera(num)
         except Exception as e:
-            print(f'Error running checks for printer {i + 1}: {e}')
+            print(f'Error running checks for printer {num}: {e}')
 
-        for event in self.pm.poll(i):
+        for event in self.pm.poll(num):
             try:
                 await self._handle_event(event)
             except Exception as e:
-                print(f'Error handling event {event.type} for printer {i + 1}: {e}')
+                print(f'Error handling event {event.type} for printer {num}: {e}')
 
-    async def _check_stale_camera(self, i: int):
+    async def _check_stale_camera(self, num: int):
         """Auto-restart an idle/finished printer whose camera has stopped sending frames (once per outage)."""
-        printer = self.pm.get_online_printer(i)
+        printer = self.pm.get_online_printer(num)
         if not printer:
             return
-        if self.pm.seconds_since_connect(i) < CAMERA_STARTUP_GRACE:
+        if self.pm.seconds_since_connect(num) < CAMERA_STARTUP_GRACE:
             return
 
-        has_frame = self.pm.has_camera_frame(i)
+        has_frame = self.pm.has_camera_frame(num)
         state = printer.get_state()
         if not has_frame and state in NOT_PRINTING_STATES:
-            if i not in self._stale_camera_reported:
-                self._stale_camera_reported.add(i)
+            if num not in self._stale_camera_reported:
+                self._stale_camera_reported.add(num)
                 if not self.auto_restart:
-                    await self.ms.log_message(f"Printer {i + 1} has no camera ({state}). Auto-restart disabled, skipping.")
+                    await self.ms.log_message(f"Printer {num} has no camera ({state}). Auto-restart disabled, skipping.")
                     return
-                await self.ms.log_message(f"Printer {i + 1} has no camera ({state}). Auto-restarting...")
+                await self.ms.log_message(f"Printer {num} has no camera ({state}). Auto-restarting...")
                 try:
-                    self.pm.restart(i)
+                    self.pm.restart(num)
                 except Exception as e:
-                    await self.ms.log_message(f"Failed to auto-restart Printer {i + 1}: {e}")
+                    await self.ms.log_message(f"Failed to auto-restart Printer {num}: {e}")
         elif has_frame:
             # Camera recovered, clear the flag
-            self._stale_camera_reported.discard(i)
+            self._stale_camera_reported.discard(num)
 
-    async def _check_periodic_camera(self, i: int):
+    async def _check_periodic_camera(self, num: int):
         """Send a recurring camera snapshot when the claimer's configured trigger is due."""
-        session = self.storage.get_print(i)
+        session = self.storage.get_print(num)
         if not session or not session.claimed_by or not session.notify_every_type:
             return
-        snap = self.pm.snapshot(i)
+        snap = self.pm.snapshot(num)
         if not snap or snap.state != GcodeState.RUNNING:
             return
 
@@ -141,42 +141,42 @@ class PrinterMonitor:
             due = time.time() - (session.notify_every_last_sent_at or 0) >= interval * 60
 
         if due:
-            frame = await self.pm.get_camera_frame(i)
-            await self.ms.send_periodic_camera_notification(i, snap, trigger_value, frame)
+            frame = await self.pm.get_camera_frame(num)
+            await self.ms.send_periodic_camera_notification(num, snap, trigger_value, frame)
 
     async def _handle_event(self, event: PrinterEvent):
         printer = event.printer
-        i = event.printer_index
+        num = event.printer_num
 
         if event.type == EventType.STATE_CHANGED:
             # Log state changes to stdout only (not to Telegram)
             if 'new' in event.data:
                 await self.ms.log_message(
-                    f'Printer {i + 1} GCODE state: {event.data["prev"]} -> {event.data["new"]}', stdout_only=True)
+                    f'Printer {num} GCODE state: {event.data["prev"]} -> {event.data["new"]}', stdout_only=True)
             else:
                 await self.ms.log_message(
-                    f'Printer {i + 1} PRINT state: {event.data["prev_print"]} -> {event.data["new_print"]}', stdout_only=True)
+                    f'Printer {num} PRINT state: {event.data["prev_print"]} -> {event.data["new_print"]}', stdout_only=True)
 
         elif event.type == EventType.PRINT_STARTED:
             await asyncio.sleep(PRINT_STARTED_DELAY)
-            await self.ms.send_print_started(i, format_duration(printer.get_time()), to_int(printer.total_layer_num()))
+            await self.ms.send_print_started(num, format_duration(printer.get_time()), to_int(printer.total_layer_num()))
 
         elif event.type == EventType.PRINT_FINISHED:
-            await self.ms.send_print_finished(i, await self.pm.get_camera_frame(i))
+            await self.ms.send_print_finished(num, await self.pm.get_camera_frame(num))
 
         elif event.type == EventType.PRINT_FAILED:
-            frame = await self.pm.get_camera_frame(i)
-            await self.ms.send_print_failed(i, event.data.get('error_code'), frame)
+            frame = await self.pm.get_camera_frame(num)
+            await self.ms.send_print_failed(num, event.data.get('error_code'), frame)
 
         elif event.type == EventType.PRINT_PAUSED:
-            frame = await self.pm.get_camera_frame(i)
-            await self.ms.log_message(f'Printer {i + 1} has paused printing. (code: {event.data.get("error_code")})', frame)
+            frame = await self.pm.get_camera_frame(num)
+            await self.ms.log_message(f'Printer {num} has paused printing. (code: {event.data.get("error_code")})', frame)
 
         elif event.type == EventType.LAYER_CHANGED:
-            await self._handle_layer_change(i, event.data['prev_layer'], event.data['layer'])
+            await self._handle_layer_change(num, event.data['prev_layer'], event.data['layer'])
 
-    async def _handle_layer_change(self, i: int, prev_layer: int, layer: int):
-        session = self.storage.get_print(i)
+    async def _handle_layer_change(self, num: int, prev_layer: int, layer: int):
+        session = self.storage.get_print(num)
         if not session or not session.claimed_by:
             return
 
@@ -187,8 +187,8 @@ class PrinterMonitor:
             return
 
         # One capture serves both notifications
-        frame = await self.pm.get_camera_frame(i)
+        frame = await self.pm.get_camera_frame(num)
         if layer2_due:
-            await self.ms.send_layer2_notification(i, frame)
+            await self.ms.send_layer2_notification(num, frame)
         if custom_due:
-            await self.ms.send_custom_layer_notification(i, frame)
+            await self.ms.send_custom_layer_notification(num, frame)
