@@ -273,6 +273,14 @@ class PrinterManager:
             speed_percent=to_int(printer.get_print_speed()),
         )
 
+    def set_speed(self, num: int, level: int) -> bool:
+        """Switch the print speed profile (1 silent .. 4 ludicrous)."""
+        printer = self.get_online_printer(num)
+        if not printer:
+            return False
+        # Printer.set_print_speed() only accepts 0-3, but the printer's profiles are 1-4
+        return bool(printer.mqtt_client.set_print_speed_lvl(level))
+
     # --- State polling ---
 
     def poll(self, num: int) -> list[PrinterEvent]:

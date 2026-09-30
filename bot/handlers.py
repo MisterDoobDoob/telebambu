@@ -10,7 +10,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from bambulabs_api import GcodeState
 
 from data import Role, Storage, can_assign
-from printers import PrinterManager
+from printers import PrinterManager, SPEED_LEVELS
 from . import ui
 from .messages import MessageService
 from .telegram_bot import get_bot_context, parse_chat_id
@@ -86,6 +86,7 @@ class BotHandlers:
             "stop_at": self.cmd_stop_at,
             "pause": self.cmd_pause,
             "resume": self.cmd_resume,
+            "speed": self.cmd_speed,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
             "claim": self.cmd_claim,
@@ -504,6 +505,40 @@ class BotHandlers:
 
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self._pause_or_resume(update, context, pause=False)
+
+    async def cmd_speed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show or change a print's speed profile (claimer or admin)."""
+        reply = update.effective_message.reply_text
+        levels = "|".join(SPEED_LEVELS.values())
+        usage = f"Usage: /speed [printer] <{levels}>"
+        resolved = await self._resolve_printer(update, context.args, takes_value=True, admin_any=True, usage=usage)
+        if not resolved:
+            return
+        printer_num, args = resolved
+        printer = self.pm.get_online_printer(printer_num)
+        details = self.pm.details(printer_num)
+        if not printer or not details:
+            await reply(f"Printer {printer_num} is not connected.")
+            return
+        if not args:
+            await reply(f"Printer {printer_num} speed: {details.speed_level} ({details.speed_percent}%)\n{usage}")
+            return
+
+        choice = args[0].lower()
+        level = int(choice) if choice.isdigit() else next((lvl for lvl, name in SPEED_LEVELS.items() if name == choice), None)
+        if level not in SPEED_LEVELS or len(args) > 1:
+            await reply(usage)
+            return
+        state = printer.get_state()
+        if state not in (GcodeState.RUNNING, GcodeState.PAUSE):
+            await reply(f"Printer {printer_num} isn't printing, so its speed can't be changed.")
+            return
+        if not self.pm.set_speed(printer_num, level):
+            await reply(f"Failed to change Printer {printer_num}'s speed.")
+            return
+        await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} set Printer {printer_num} "
+                                  f"speed to {SPEED_LEVELS[level]}.")
+        await reply(f"Printer {printer_num} speed set to {SPEED_LEVELS[level]}.")
 
     async def cmd_stop_at(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop a print automatically once it reaches a layer (claimer or admin)."""
