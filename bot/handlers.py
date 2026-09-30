@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import re
 from dataclasses import replace
@@ -76,6 +77,7 @@ class BotHandlers:
             "light": self.cmd_light,
             "unclaim": self.cmd_unclaim,
             "restart": self.cmd_restart,
+            "restartall": self.cmd_restartall,
             "staff": self.cmd_staff,
             "config": self.cmd_config,
             "printer": self.cmd_printer,
@@ -213,7 +215,7 @@ class BotHandlers:
 
     async def _restart(self, printer_num: int) -> str:
         try:
-            self.pm.restart(printer_num)
+            await self.pm.restart(printer_num)
             return f"Printer {printer_num} reconnection initiated."
         except Exception as e:
             return f"Failed to restart Printer {printer_num}: {e}"
@@ -432,24 +434,34 @@ class BotHandlers:
         printer_num, _ = resolved
         await update.effective_message.reply_text(await self._unclaim(context, printer_num))
 
+    async def _restart_many(self, update: Update, printer_nums: list[int]):
+        """Restart printers concurrently and reply with one line per printer."""
+        actor = self.storage.display_name(update.effective_user.id)
+        await self.ms.log_message(f"{actor} restarted Printer(s) {', '.join(map(str, printer_nums))}.")
+        results = await asyncio.gather(*(self._restart(num) for num in printer_nums))
+        await update.effective_message.reply_text("\n".join(results))
+
     async def cmd_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Admin only: reboot a printer and reconnect."""
+        """Admin only: reboot one or more printers and reconnect."""
         reply = update.effective_message.reply_text
         if not await self._require_admin(update):
             return
-
         if not context.args:
-            await reply(f"Usage: /restart <printer>\nAvailable printers: {self.pm.numbers_text()}")
-            return
-        if not context.args[0].isdigit():
-            await reply("Please provide a valid printer number.")
-            return
-        printer_num = int(context.args[0])
-        if printer_num not in self.pm:
-            await reply(f"Invalid printer number. Use {self.pm.numbers_text()}")
+            await reply(f"Usage: /restart <printer> [printer ...]\nAvailable printers: {self.pm.numbers_text()}")
             return
 
-        await reply(await self._restart(printer_num))
+        invalid = [arg for arg in context.args if not arg.isdigit() or int(arg) not in self.pm]
+        if invalid:
+            await reply(f"Invalid printer number(s): {', '.join(invalid)}. Use {self.pm.numbers_text()}")
+            return
+        # dict.fromkeys drops repeats while keeping the order given
+        await self._restart_many(update, list(dict.fromkeys(int(arg) for arg in context.args)))
+
+    async def cmd_restartall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only: reboot every printer."""
+        if not await self._require_admin(update):
+            return
+        await self._restart_many(update, self.pm.numbers())
 
     async def cmd_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List staff roles (anyone) or change someone's role (owner/admin, by rank)."""

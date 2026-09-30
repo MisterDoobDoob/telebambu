@@ -18,6 +18,8 @@ PAUSE_NOTIFY_COOLDOWN = 60  # seconds
 PRE_PRINT_STATES = (GcodeState.FINISH, GcodeState.IDLE, GcodeState.PREPARE)
 # How long to wait for a removed printer to disconnect before giving up on it
 DISCONNECT_TIMEOUT = 10  # seconds
+# How long a reboot + reconnect may take before it is reported as failed
+RESTART_TIMEOUT = 30  # seconds
 # States where the printer is not in use
 IDLE_STATES = (GcodeState.IDLE, GcodeState.FINISH, GcodeState.UNKNOWN)
 
@@ -189,14 +191,22 @@ class PrinterManager:
                 except Exception as e:
                     print(f'Failed to disconnect printer {num}: {e}')
 
-    def restart(self, num: int):
+    async def restart(self, num: int):
         """Reboot a printer and re-establish the connection. Raises on failure."""
         printer = self.get_printer(num)
         if not printer:
             raise LookupError(f'Printer {num} not found.')
-        printer.reboot()
-        printer.disconnect()
-        printer.connect()
+
+        def reboot_and_reconnect():
+            printer.reboot()
+            printer.disconnect()
+            printer.connect()
+
+        # disconnect() can block on a stuck camera thread, so keep it off the event loop
+        try:
+            await asyncio.wait_for(asyncio.to_thread(reboot_and_reconnect), RESTART_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise TimeoutError(f'no response after {RESTART_TIMEOUT}s') from None
         self.slots[num].connected_at = time.time()
 
     # --- Accessors ---
