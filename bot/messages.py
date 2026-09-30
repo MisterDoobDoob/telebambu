@@ -14,7 +14,6 @@ from data import Storage
 from data.storage import PrintSession
 from . import ui
 from .telegram_bot import BotContext
-import config as cfg
 
 if TYPE_CHECKING:
     from printers.manager import PrinterSnapshot
@@ -132,8 +131,9 @@ class MessageService:
                 targets.append((self.ctx.chat_id, self.ctx.thread_id, 'claimer'))
 
         # Always notify the bot owner, avoiding a double-send if the claimer is the owner
-        if not (session and session.claimed_by == cfg.OWNER_ID):
-            targets.append((cfg.OWNER_ID, None, 'owner'))
+        owner_id = self.storage.owner_id
+        if owner_id and not (session and session.claimed_by == owner_id):
+            targets.append((owner_id, None, 'owner'))
 
         sent_messages = []
         for chat_id, thread_id, label in targets:

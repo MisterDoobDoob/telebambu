@@ -10,6 +10,7 @@ from printers.monitor import DEFAULT_UPDATE_INTERVAL, DEFAULT_STATS_LOG_INTERVAL
 
 async def main():
     storage = Storage()
+    storage.ensure_owner(getattr(cfg, 'OWNER_ID', None))
     printer_manager = PrinterManager(cfg.PRINTERS)
     app = create_application()
     message_service = MessageService(app.bot, get_bot_context(), storage)

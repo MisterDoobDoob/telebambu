@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass, asdict, fields
 from typing import Optional
 
+from .roles import Role
+
 DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'data.json')
 # Bumped when data.json's layout changes; older files are migrated on load
 DATA_VERSION = 2
@@ -29,6 +31,13 @@ class PrintSession:
     notify_every_value: Optional[int] = None
     notify_every_last_value: Optional[int] = None
     notify_every_last_sent_at: Optional[float] = None
+
+
+@dataclass
+class KnownUser:
+    """A Telegram user the bot has seen, so commands can refer to them by @username."""
+    username: Optional[str] = None
+    name: Optional[str] = None
 
 
 @dataclass
@@ -59,6 +68,8 @@ class Storage:
         self.active_prints: dict[int, PrintSession] = {}  # printer number (1-based) -> PrintSession
         self.user_preferences: dict[int, UserPreferences] = {}  # user_id -> UserPreferences
         self.status_message_id: Optional[int] = None
+        self.roles: dict[int, Role] = {}  # user_id -> Role, only staff are stored
+        self.users: dict[int, KnownUser] = {}  # user_id -> last seen username/name
         self._load()
 
     def _load(self):
@@ -78,6 +89,12 @@ class Storage:
                 self.user_preferences[int(user_id)] = _from_dict(UserPreferences, prefs_data)
 
             self.status_message_id = data.get('status_message_id')
+
+            for user_id, role in data.get('roles', {}).items():
+                self.roles[int(user_id)] = Role[role]
+
+            for user_id, user_data in data.get('users', {}).items():
+                self.users[int(user_id)] = _from_dict(KnownUser, user_data)
         except Exception as e:
             print(f'Failed to load data: {e}')
 
@@ -87,6 +104,8 @@ class Storage:
             'active_prints': {str(num): asdict(s) for num, s in self.active_prints.items()},
             'user_preferences': {str(uid): asdict(p) for uid, p in self.user_preferences.items()},
             'status_message_id': self.status_message_id,
+            'roles': {str(uid): role.name for uid, role in self.roles.items()},
+            'users': {str(uid): asdict(u) for uid, u in self.users.items()},
         }
         # Write to a temp file then rename, so a crash mid-write can't corrupt data.json
         tmp_file = DATA_FILE + '.tmp'
@@ -210,6 +229,64 @@ class Storage:
         if value is not None:
             changes['notify_every_last_value'] = value
         self._update(printer_num, **changes)
+
+    # --- Users & roles ---
+
+    def remember_user(self, user_id: int, username: Optional[str], name: Optional[str]):
+        """Record a user's current username and name, saving only when they changed."""
+        known = KnownUser(username=username, name=name)
+        if self.users.get(user_id) != known:
+            self.users[user_id] = known
+            self._save()
+
+    def find_user(self, username: str) -> Optional[int]:
+        """Look up a user id by @username (case-insensitive), if the bot has seen them."""
+        username = username.lstrip('@').lower()
+        for user_id, known in self.users.items():
+            if known.username and known.username.lower() == username:
+                return user_id
+        return None
+
+    def display_name(self, user_id: int) -> str:
+        known = self.users.get(user_id)
+        if known and known.username:
+            return f'@{known.username}'
+        if known and known.name:
+            return known.name
+        return str(user_id)
+
+    def get_role(self, user_id: int) -> Role:
+        return self.roles.get(user_id, Role.USER)
+
+    def set_role(self, user_id: int, role: Role):
+        if role == Role.USER:
+            self.roles.pop(user_id, None)
+        else:
+            self.roles[user_id] = role
+        self._save()
+
+    @property
+    def owner_id(self) -> Optional[int]:
+        return next((uid for uid, role in self.roles.items() if role == Role.OWNER), None)
+
+    def ensure_owner(self, user_id: Optional[int]):
+        """Seed the owner role from config on first run; later transfers take precedence."""
+        if user_id and self.owner_id is None:
+            self.set_role(int(user_id), Role.OWNER)
+
+    def transfer_ownership(self, new_owner_id: int):
+        """Make someone else the owner; the previous owner becomes an admin."""
+        old_owner = self.owner_id
+        if old_owner is not None:
+            self.roles[old_owner] = Role.ADMIN
+        self.roles[new_owner_id] = Role.OWNER
+        self._save()
+
+    def staff(self) -> dict[Role, list[int]]:
+        grouped = {role: [] for role in (Role.OWNER, Role.ADMIN, Role.MOD)}
+        for user_id, role in self.roles.items():
+            grouped[role].append(user_id)
+        return grouped
 
     # --- Status message ---
 

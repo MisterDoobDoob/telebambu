@@ -1,17 +1,17 @@
 import re
 
-from telegram import Update, CallbackQuery, InputFile
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram import Update, CallbackQuery, InputFile, MessageEntity
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
 
-from data import Storage
+from data import Role, Storage, can_assign
 from printers import PrinterManager
 from . import ui
 from .messages import MessageService
-import config as cfg
 
 NOTIFY_USAGE = "Usage: /notify [printer] <layer> or /notify [printer] <percent>%"
 NOTIFY_EVERY_USAGE = "Usage: /notify_every [printer] layers <number>, time <minutes>, percent <number>, or off"
 NOTIFY_EVERY_UNITS = {"layers": "layers", "time": "minutes", "percent": "%"}
+STAFF_USAGE = "Usage: /staff list [user] or /staff edit <owner|admin|mod|user> <user>"
 
 
 # Buttons sent before printers were 1-based, e.g. ``claim_0`` or ``dm_pref_0_chat``
@@ -43,6 +43,9 @@ class BotHandlers:
         self.pm = printer_manager
 
     def register(self, app: Application):
+        # Runs before every other handler so @usernames can be resolved later
+        app.add_handler(TypeHandler(Update, self.track_user), group=-1)
+
         commands = {
             "start": self.cmd_start,
             "help": self.cmd_help,
@@ -53,6 +56,7 @@ class BotHandlers:
             "light": self.cmd_light,
             "unclaim": self.cmd_unclaim,
             "restart": self.cmd_restart,
+            "staff": self.cmd_staff,
         }
         for name, callback in commands.items():
             app.add_handler(CommandHandler(name, callback))
@@ -67,25 +71,65 @@ class BotHandlers:
         for pattern, callback in callbacks.items():
             app.add_handler(CallbackQueryHandler(callback, pattern=pattern))
 
+    # --- Users & roles ---
+
+    async def track_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if user and not user.is_bot:
+            self.storage.remember_user(user.id, user.username, user.full_name)
+
+    def is_admin(self, user_id: int) -> bool:
+        return self.storage.get_role(user_id) >= Role.ADMIN
+
+    async def _require_admin(self, update: Update) -> bool:
+        if self.is_admin(update.effective_user.id):
+            return True
+        await update.effective_message.reply_text("Only admins can use this command.")
+        return False
+
+    def _resolve_user(self, update: Update, token: str | None) -> int | None:
+        """Find the user a command refers to: a numeric id, a known @username,
+        a text mention, or (with no token) the author of the replied-to message."""
+        message = update.effective_message
+        if token is None:
+            reply_to = getattr(message, "reply_to_message", None)
+            if reply_to and reply_to.from_user and not reply_to.from_user.is_bot:
+                return reply_to.from_user.id
+            return None
+        if token.isdigit():
+            return int(token)
+        if token.startswith("@"):
+            return self.storage.find_user(token)
+        # Users without a username are mentioned by name, which arrives as a text mention entity
+        for entity in getattr(message, "entities", None) or ():
+            if entity.type == MessageEntity.TEXT_MENTION and message.parse_entity(entity) == token:
+                return entity.user.id
+        return None
+
+    def _unknown_user_text(self, token: str | None) -> str:
+        if token is None:
+            return "Please mention a user (@username or user id), or reply to one of their messages."
+        return f"I don't know {token} yet. They need to send a message where the bot can see it first, or use their user id."
+
     # --- Shared logic ---
 
     async def _resolve_printer(self, update: Update, args: list[str], *, takes_value: bool = False,
-                               owner_any: bool = False, usage: str = "") -> tuple[int, list[str]] | None:
+                               admin_any: bool = False, usage: str = "") -> tuple[int, list[str]] | None:
         """Work out which printer a command targets, replying with an error if it can't.
 
         A leading number is read as the printer when the command has no value
         argument, or when a value follows it (``/notify 2 50`` vs ``/notify 50``).
         Without one, the user's single claimed printer is used. With
-        ``owner_any``, the bot owner may target any printer.
+        ``admin_any``, admins may target any printer.
 
         Returns ``(printer_num, remaining_args)``, or None if a reply was sent.
         """
         reply = update.effective_message.reply_text
         user_id = update.effective_user.id
-        is_owner = owner_any and user_id == cfg.OWNER_ID
+        is_admin = admin_any and self.is_admin(user_id)
         claimed = self.storage.claimed_printers(user_id)
 
-        if not claimed and not is_owner:
+        if not claimed and not is_admin:
             await reply(ui.NO_CLAIM)
             return None
 
@@ -94,7 +138,7 @@ class BotHandlers:
             if printer_num not in self.pm:
                 await reply(f"Invalid printer number. Use {self.pm.numbers_text()}")
                 return None
-            if not is_owner and printer_num not in claimed:
+            if not is_admin and printer_num not in claimed:
                 claimed_list = ", ".join(str(num) for num in claimed)
                 await reply(f"You haven't claimed Printer {printer_num}. Your printer(s): {claimed_list}")
                 return None
@@ -322,8 +366,8 @@ class BotHandlers:
                     f"on Printer {printer_num}.")
 
     async def cmd_camera(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Owner has full access, claimers can access their printers."""
-        resolved = await self._resolve_printer(update, context.args, owner_any=True, usage="Usage: /camera <printer>")
+        """Admins can view any printer, claimers can view their printers."""
+        resolved = await self._resolve_printer(update, context.args, admin_any=True, usage="Usage: /camera <printer>")
         if not resolved:
             return
         printer_num, _ = resolved
@@ -340,8 +384,8 @@ class BotHandlers:
         )
 
     async def cmd_light(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Toggle the printer light (owner or claimer)."""
-        resolved = await self._resolve_printer(update, context.args, owner_any=True, usage="Usage: /light <printer>")
+        """Toggle the printer light (admin or claimer)."""
+        resolved = await self._resolve_printer(update, context.args, admin_any=True, usage="Usage: /light <printer>")
         if not resolved:
             return
         printer_num, _ = resolved
@@ -367,10 +411,9 @@ class BotHandlers:
         await update.effective_message.reply_text(await self._unclaim(context, printer_num))
 
     async def cmd_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Owner only: reboot a printer and reconnect."""
+        """Admin only: reboot a printer and reconnect."""
         reply = update.effective_message.reply_text
-        if update.effective_user.id != cfg.OWNER_ID:
-            await reply("Only the bot owner can use this command.")
+        if not await self._require_admin(update):
             return
 
         if not context.args:
@@ -385,6 +428,73 @@ class BotHandlers:
             return
 
         await reply(await self._restart(printer_num))
+
+    async def cmd_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List staff roles (anyone) or change someone's role (owner/admin, by rank)."""
+        reply = update.effective_message.reply_text
+        args = context.args
+        action = args[0].lower() if args else "list"
+
+        if action == "list":
+            if len(args) > 1 or getattr(update.effective_message, "reply_to_message", None):
+                token = args[1] if len(args) > 1 else None
+                user_id = self._resolve_user(update, token)
+                if user_id is None:
+                    await reply(self._unknown_user_text(token))
+                    return
+                await reply(f"{self.storage.display_name(user_id)} is {self.storage.get_role(user_id).label}.")
+                return
+            await reply(ui.staff_list_text(self.storage))
+            return
+
+        if action != "edit" or len(args) < 2:
+            await reply(STAFF_USAGE)
+            return
+
+        new_role = Role.parse(args[1])
+        if new_role is None:
+            await reply(f"Unknown role '{args[1]}'. Roles: owner, admin, mod, user.")
+            return
+        token = args[2] if len(args) > 2 else None
+        target = self._resolve_user(update, token)
+        if target is None:
+            await reply(self._unknown_user_text(token))
+            return
+
+        actor = update.effective_user.id
+        actor_role = self.storage.get_role(actor)
+        current = self.storage.get_role(target)
+        name = self.storage.display_name(target)
+        if target == actor:
+            await reply("You can't change your own role." if new_role != Role.OWNER else "You are already the owner.")
+            return
+        if current == new_role:
+            await reply(f"{name} is already {new_role.label}.")
+            return
+        if not can_assign(actor_role, current, new_role):
+            if actor_role == Role.ADMIN:
+                await reply("Admins can only add or remove mods.")
+            elif actor_role == Role.OWNER:
+                await reply("You can't change that role.")
+            else:
+                await reply("Only the owner and admins can change roles.")
+            return
+
+        actor_name = self.storage.display_name(actor)
+        if new_role == Role.OWNER:
+            # Handing over ownership can't be undone by the old owner, so ask for confirmation
+            if len(args) < 4 or args[3].lower() != "confirm":
+                await reply(f"This makes {name} the owner and you an admin, and only they can undo it.\n"
+                            f"To continue, send: /staff edit owner {args[2] if token else target} confirm")
+                return
+            self.storage.transfer_ownership(target)
+            await self.ms.log_message(f"Role change: {actor_name} transferred ownership to {name}.")
+            await reply(f"Ownership transferred to {name}. You are now an admin.")
+            return
+
+        self.storage.set_role(target, new_role)
+        await self.ms.log_message(f"Role change: {actor_name} changed {name} from {current.label} to {new_role.label}.")
+        await reply(f"{name} is now {new_role.label}.")
 
     # --- Callback buttons ---
 

@@ -1,7 +1,8 @@
 """Message texts and inline keyboards shared by handlers, notifications and the monitor."""
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from data.storage import PrintSession
+from data import Role
+from data.storage import PrintSession, Storage
 
 HELP_TEXT = (
     "Available commands:\n"
@@ -86,3 +87,12 @@ def settings_message(printer_num: int, session: PrintSession) -> tuple[str, Inli
         _unclaim_help_row(printer_num),
     ])
     return text, keyboard
+
+
+def staff_list_text(storage: Storage) -> str:
+    staff = storage.staff()
+    lines = ["Staff:"]
+    for role in (Role.OWNER, Role.ADMIN, Role.MOD):
+        names = ", ".join(sorted(storage.display_name(uid) for uid in staff[role])) or "none"
+        lines.append(f"- {role.label}: {names}")
+    return "\n".join(lines)
