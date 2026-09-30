@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 from typing import Optional
 
 from .roles import Role
@@ -31,6 +31,7 @@ class PrintSession:
     notify_every_value: Optional[int] = None
     notify_every_last_value: Optional[int] = None
     notify_every_last_sent_at: Optional[float] = None
+    watchers: list[int] = field(default_factory=list)  # extra users notified alongside the claimer
 
 
 @dataclass
@@ -174,6 +175,23 @@ class Storage:
         )
         self._save()
         return self.active_prints[printer_num]
+
+    def add_watchers(self, printer_num: int, user_ids: list[int]) -> list[int]:
+        """Add users to a print's notifications, returning the ones that were newly added."""
+        session = self.active_prints.get(printer_num)
+        if not session:
+            return []
+        added = [uid for uid in dict.fromkeys(user_ids) if uid != session.claimed_by and uid not in session.watchers]
+        self._update(printer_num, watchers=session.watchers + added)
+        return added
+
+    def remove_watchers(self, printer_num: int, user_ids: list[int]) -> list[int]:
+        session = self.active_prints.get(printer_num)
+        if not session:
+            return []
+        removed = [uid for uid in session.watchers if uid in user_ids]
+        self._update(printer_num, watchers=[uid for uid in session.watchers if uid not in removed])
+        return removed
 
     # --- Claimer preferences (also saved as the user's defaults) ---
 

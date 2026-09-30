@@ -111,6 +111,7 @@ class MessageService:
             await self._send(session.claimed_by, message, image)
         else:
             await self._send_main(message, image)
+        await self._notify_watchers(session, message, image)
 
         self.storage.end_print(printer_num)
 
@@ -135,6 +136,11 @@ class MessageService:
         if owner_id and not (session and session.claimed_by == owner_id):
             targets.append((owner_id, None, 'owner'))
 
+        # Watchers opted in to this print's notifications, so they always get a DM
+        for watcher in session.watchers if session else ():
+            if watcher != owner_id:
+                targets.append((watcher, None, 'watcher'))
+
         sent_messages = []
         for chat_id, thread_id, label in targets:
             try:
@@ -154,12 +160,24 @@ class MessageService:
 
         self._spawn(_delete_later())
 
-    # --- Claimer notifications (sent to the claimer's DM) ---
+    # --- Claimer notifications (sent to the claimer's and watchers' DMs) ---
+
+    async def _notify_watchers(self, session: PrintSession | None, message: str, image: bytes | None):
+        """DM a print's watchers. One unreachable watcher doesn't stop the others."""
+        for watcher in session.watchers if session else ():
+            try:
+                await self._send(watcher, message, image)
+            except Exception as e:
+                print(f'Failed to notify watcher {watcher} of Printer {session.printer_num}: {e}')
 
     async def _notify_claimer(self, printer_num: int, message: str, image: bytes | None):
         session = self.storage.get_print(printer_num)
         if session and session.claimed_by:
-            await self._send(session.claimed_by, message, image, reply_markup=ui.unclaim_keyboard(printer_num))
+            try:
+                await self._send(session.claimed_by, message, image, reply_markup=ui.unclaim_keyboard(printer_num))
+            except Exception as e:
+                print(f'Failed to notify claimer of Printer {printer_num}: {e}')
+            await self._notify_watchers(session, message, image)
 
     async def send_layer2_notification(self, printer_num: int, image: bytes | None = None):
         await self._notify_claimer(

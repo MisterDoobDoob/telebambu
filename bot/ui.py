@@ -113,3 +113,11 @@ def printer_list_text(printers: dict, printer_manager) -> str:
         online = "online" if printer_manager.get_online_printer(num) else "offline"
         lines.append(f"{num}: {config.ip} | MAC {config.mac or '-'} | SN {config.serial} | {online}")
     return "\n".join(lines)
+
+
+def watchers_text(printer_num: int, session: PrintSession, storage: Storage) -> str:
+    names = ", ".join(storage.display_name(uid) for uid in session.watchers)
+    if not names:
+        return (f"Only {session.claimed_username} is notified about Printer {printer_num}. "
+                f"Add others with /notify_user {printer_num} <user>.")
+    return f"Printer {printer_num} notifies {session.claimed_username} and: {names}"

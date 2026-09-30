@@ -30,6 +30,8 @@ PRINTER_USAGE = (
 # /printer edit field names -> PrinterConfig attributes
 PRINTER_FIELDS = {"mac": "mac", "ip": "ip", "code": "access_code", "serial_no": "serial"}
 MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
+NOTIFY_USER_USAGE = ("Usage: /notify_user <printer> <user> [user ...] to add, "
+                     "/notify_user <printer> remove <user> [user ...] to remove, or /notify_user <printer> to list")
 STAFF_USAGE = "Usage: /staff list [user] or /staff edit <owner|admin|mod|user> <user>"
 
 
@@ -73,6 +75,7 @@ class BotHandlers:
             "info": self.cmd_info,
             "notify": self.cmd_notify,
             "notify_every": self.cmd_notify_every,
+            "notify_user": self.cmd_notify_user,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
             "claim": self.cmd_claim,
@@ -414,6 +417,73 @@ class BotHandlers:
         self.storage.set_notify_every(printer_num, notify_type, value, initial_value)
         await reply(f"Recurring camera notifications set every {value} {NOTIFY_EVERY_UNITS[notify_type]} "
                     f"on Printer {printer_num}.")
+
+    async def cmd_notify_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Let the claimer or a watcher of a print add or remove other users to notify."""
+        reply = update.effective_message.reply_text
+        args = context.args
+        if not args or not args[0].isdigit():
+            await reply(NOTIFY_USER_USAGE)
+            return
+        printer_num = int(args[0])
+        session = self.storage.get_print(printer_num)
+        if not session or not session.claimed_by:
+            await reply(f"Printer {printer_num} doesn't have a claimed print.")
+            return
+
+        actor = update.effective_user.id
+        if actor != session.claimed_by and actor not in session.watchers and not self.is_admin(actor):
+            await reply(f"Only the claimer of Printer {printer_num} or people it notifies can do that.")
+            return
+
+        tokens = args[1:]
+        if not tokens and not getattr(update.effective_message, "reply_to_message", None):
+            await reply(ui.watchers_text(printer_num, session, self.storage))
+            return
+
+        removing = bool(tokens) and tokens[0].lower() == "remove"
+        if removing:
+            tokens = tokens[1:]
+        user_ids, unknown = [], []
+        for token in tokens or [None]:
+            user_id = self._resolve_user(update, token)
+            if user_id is None:
+                unknown.append(token or "(reply)")
+            else:
+                user_ids.append(user_id)
+
+        lines = []
+        actor_name = self.storage.display_name(actor)
+        if removing:
+            removed = self.storage.remove_watchers(printer_num, user_ids)
+            if removed:
+                lines.append(f"Stopped notifying {self._names(removed)} about Printer {printer_num}.")
+            if len(removed) < len(user_ids):
+                lines.append("Some of those users weren't being notified.")
+        else:
+            added = self.storage.add_watchers(printer_num, user_ids)
+            if added:
+                lines.append(f"{self._names(added)} will now be notified about Printer {printer_num}.")
+            if len(added) < len(user_ids):
+                lines.append("Skipped users who are already notified (or are the claimer).")
+            unreachable = []
+            for user_id in added:
+                try:
+                    await context.bot.send_message(chat_id=user_id, text=(
+                        f"{actor_name} added you to Printer {printer_num}'s notifications. "
+                        f"Use /notify_user {printer_num} remove {self.storage.display_name(user_id)} to stop them."))
+                except Exception:
+                    unreachable.append(user_id)
+            if unreachable:
+                lines.append(f"I can't DM {self._names(unreachable)} yet. They need to start a chat with "
+                             f"@{context.bot.username} to receive notifications.")
+        if unknown:
+            lines.append(self._unknown_user_text(unknown[0]) if unknown == ["(reply)"]
+                         else f"Unknown user(s): {', '.join(unknown)}. They need to message where the bot can see it first.")
+        await reply("\n".join(lines) or NOTIFY_USER_USAGE)
+
+    def _names(self, user_ids: list[int]) -> str:
+        return ", ".join(self.storage.display_name(uid) for uid in user_ids)
 
     async def cmd_camera(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admins can view any printer, claimers can view their printers."""
