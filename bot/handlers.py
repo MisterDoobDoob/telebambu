@@ -80,6 +80,7 @@ class BotHandlers:
             "notify": self.cmd_notify,
             "notify_every": self.cmd_notify_every,
             "notify_user": self.cmd_notify_user,
+            "stop_at": self.cmd_stop_at,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
             "claim": self.cmd_claim,
@@ -317,6 +318,8 @@ class BotHandlers:
                 info_text += f"- Notification: {session.notify_original_value}% (layer {session.notify_layer})\n"
             else:
                 info_text += f"- Notification: layer {session.notify_layer}\n"
+        if session and session.stop_at_layer:
+            info_text += f"- Stops at layer {session.stop_at_layer}\n"
         if session and session.notify_every_type:
             info_text += f"- Recurring snapshots: every {session.notify_every_value} {NOTIFY_EVERY_UNITS[session.notify_every_type]}\n"
 
@@ -421,6 +424,45 @@ class BotHandlers:
         self.storage.set_notify_every(printer_num, notify_type, value, initial_value)
         await reply(f"Recurring camera notifications set every {value} {NOTIFY_EVERY_UNITS[notify_type]} "
                     f"on Printer {printer_num}.")
+
+    async def cmd_stop_at(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Stop a print automatically once it reaches a layer (claimer or admin)."""
+        reply = update.effective_message.reply_text
+        usage = "Usage: /stop_at [printer] <layer> or /stop_at [printer] off"
+        resolved = await self._resolve_printer(update, context.args, takes_value=True, admin_any=True, usage=usage)
+        if not resolved:
+            return
+        printer_num, args = resolved
+        session = self.storage.get_print(printer_num)
+        if not session:
+            await reply(f"Printer {printer_num} has no active print.")
+            return
+        if len(args) != 1:
+            current = f"Stops at layer {session.stop_at_layer}." if session.stop_at_layer else "No stop layer set."
+            await reply(f"{current}\n{usage}")
+            return
+
+        if args[0].lower() == "off":
+            self.storage.set_stop_at(printer_num, None)
+            await reply(f"Printer {printer_num} will no longer stop early.")
+            return
+        if not args[0].isdigit() or int(args[0]) < 1:
+            await reply("Layer must be a positive number.")
+            return
+        layer = int(args[0])
+        snap = self.pm.snapshot(printer_num)
+        if snap and snap.layer >= layer:
+            await reply(f"Printer {printer_num} is already at layer {snap.layer}.")
+            return
+        if snap and snap.total_layers and layer > snap.total_layers:
+            await reply(f"This print only has {snap.total_layers} layers.")
+            return
+
+        self.storage.set_stop_at(printer_num, layer)
+        await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} set Printer {printer_num} "
+                                  f"to stop at layer {layer}.")
+        await reply(f"Printer {printer_num} will stop the print when it reaches layer {layer}. "
+                    f"Use /stop_at {printer_num} off to cancel.")
 
     async def cmd_notify_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Let the claimer or a watcher of a print add or remove other users to notify."""

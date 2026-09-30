@@ -32,6 +32,8 @@ class PrintSession:
     notify_every_last_value: Optional[int] = None
     notify_every_last_sent_at: Optional[float] = None
     watchers: list[int] = field(default_factory=list)  # extra users notified alongside the claimer
+    stop_at_layer: Optional[int] = None  # stop the print once it reaches this layer
+    stopped_at_layer: Optional[int] = None  # set when the bot stopped the print on request
 
 
 @dataclass
@@ -220,6 +222,12 @@ class Storage:
             notify_type=notify_type,
             notify_original_value=original_value if original_value is not None else layer,
         )
+
+    def set_stop_at(self, printer_num: int, layer: Optional[int]):
+        self._update(printer_num, stop_at_layer=layer)
+
+    def mark_stopped(self, printer_num: int, layer: int):
+        self._update(printer_num, stop_at_layer=None, stopped_at_layer=layer)
 
     def mark_notify_layer_notified(self, printer_num: int):
         self._update(printer_num, notify_layer_notified=True)

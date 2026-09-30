@@ -102,10 +102,12 @@ class MessageService:
         session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
-        if session and session.claimed_by:
-            message = f"Printer {printer_num} has finished printing. ({session.claimed_username})"
+        if session and session.stopped_at_layer:
+            message = f"Printer {printer_num} was stopped at layer {session.stopped_at_layer} as requested."
         else:
             message = f"Printer {printer_num} has finished printing."
+        if session and session.claimed_by:
+            message += f" ({session.claimed_username})"
 
         if session and session.claimed_by and session.dm_preference == "dm":
             await self._send(session.claimed_by, message, image)
@@ -121,7 +123,11 @@ class MessageService:
         session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
-        message = f"Printer {printer_num} failed!\n{lookup_error(error_code)}"
+        if session and session.stopped_at_layer:
+            # Stopping a print on request ends it the same way as a failure
+            message = f"Printer {printer_num} was stopped at layer {session.stopped_at_layer} as requested."
+        else:
+            message = f"Printer {printer_num} failed!\n{lookup_error(error_code)}"
         targets = []  # (chat_id, thread_id, label)
 
         # Notify the print owner (claimer) based on their DM preference
@@ -183,6 +189,9 @@ class MessageService:
         await self._notify_claimer(
             printer_num, f"Printer {printer_num}: Layer 2 complete! Your print is progressing well.", image)
         self.storage.mark_layer2_notified(printer_num)
+
+    async def send_stopped_notification(self, printer_num: int, layer: int, image: bytes | None = None):
+        await self._notify_claimer(printer_num, f"Printer {printer_num}: Stopping the print at layer {layer} as requested.", image)
 
     async def send_custom_layer_notification(self, printer_num: int, image: bytes | None = None):
         session = self.storage.get_print(printer_num)
