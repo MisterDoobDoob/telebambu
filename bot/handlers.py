@@ -75,6 +75,7 @@ class BotHandlers:
             "notify_every": self.cmd_notify_every,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
+            "claim": self.cmd_claim,
             "unclaim": self.cmd_unclaim,
             "restart": self.cmd_restart,
             "restartall": self.cmd_restartall,
@@ -198,6 +199,31 @@ class BotHandlers:
             text=f"You claimed Printer {printer_num}!{self._print_status(printer_num)}\n\n{ui.CLAIM_DM_PROMPT}",
             reply_markup=ui.dm_preference_keyboard(printer_num),
         )
+
+    async def _claim(self, context: ContextTypes.DEFAULT_TYPE, user, printer_num: int) -> bool:
+        """Claim an unclaimed print for a user, DM them its settings and update the main chat message.
+
+        Returns False if the DM couldn't be delivered (the user hasn't started the bot yet),
+        in which case the main chat message asks them to.
+        """
+        username = f"@{user.username}" if user.username else user.full_name
+        session = self.storage.claim_print(printer_num, user.id, username)
+        text = ui.claimed_text(printer_num, session)
+        reply_markup = None
+        try:
+            await self._send_claim_dm(context, user.id, printer_num)
+            dm_sent = True
+        except Exception:
+            dm_sent = False
+            text += f"\n\n{username}, please start a conversation with the bot to configure your print settings:"
+            reply_markup = ui.start_dm_keyboard(context.bot.username, printer_num)
+
+        try:
+            await context.bot.edit_message_text(chat_id=session.chat_id, message_id=session.message_id,
+                                                text=text, reply_markup=reply_markup)
+        except Exception as e:
+            print(f'Could not update main chat message for Printer {printer_num} claim: {e}')
+        return dm_sent
 
     async def _unclaim(self, context: ContextTypes.DEFAULT_TYPE, printer_num: int) -> str:
         """Unclaim a print, restore the Claim button in the main chat and return a reply text."""
@@ -425,6 +451,36 @@ class BotHandlers:
             await reply(f"Printer {printer_num} light turned {'ON' if turn_on else 'OFF'}.")
         except Exception as e:
             await reply(f"Failed to toggle light: {e}")
+
+    async def cmd_claim(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Claim an unclaimed print without its button, e.g. when the start message is buried."""
+        reply = update.effective_message.reply_text
+        args = context.args
+        if len(args) != 1 or not args[0].isdigit():
+            await reply(f"Usage: /claim <printer>\nAvailable printers: {self.pm.numbers_text()}")
+            return
+        printer_num = int(args[0])
+        if printer_num not in self.pm:
+            await reply(f"Invalid printer number. Use {self.pm.numbers_text()}")
+            return
+
+        user = update.effective_user
+        session = self.storage.get_print(printer_num)
+        if not session:
+            await reply(f"Printer {printer_num} has no active print to claim.")
+            return
+        if session.claimed_by == user.id:
+            await reply(f"You have already claimed Printer {printer_num}.")
+            return
+        if session.claimed_by:
+            await reply(f"Printer {printer_num} is already claimed by {session.claimed_username}.")
+            return
+
+        if await self._claim(context, user, printer_num):
+            await reply(f"You claimed Printer {printer_num}. Check your DMs for its settings.")
+        else:
+            await reply(f"You claimed Printer {printer_num}. Start a conversation with the bot to configure it:",
+                        reply_markup=ui.start_dm_keyboard(context.bot.username, printer_num))
 
     async def cmd_unclaim(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Unclaim the print and revert the main chat message."""
@@ -690,20 +746,7 @@ class BotHandlers:
             await query.answer(f"Already claimed by {session.claimed_username}", show_alert=True)
             return
         await query.answer()
-
-        username = f"@{user.username}" if user.username else user.full_name
-        session = self.storage.claim_print(printer_num, user.id, username)
-        claimed_text = ui.claimed_text(printer_num, session)
-
-        try:
-            await self._send_claim_dm(context, user.id, printer_num)
-            await query.edit_message_text(claimed_text)
-        except Exception:
-            # User hasn't started a conversation with the bot yet
-            await query.edit_message_text(
-                f"{claimed_text}\n\n{username}, please start a conversation with the bot to configure your print settings:",
-                reply_markup=ui.start_dm_keyboard(context.bot.username, printer_num),
-            )
+        await self._claim(context, user, printer_num)
 
     async def _claimer_session(self, query: CallbackQuery, printer_num: int):
         """Return the session if the button presser is its claimer, otherwise answer the query and return None."""
