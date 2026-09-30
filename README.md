@@ -158,6 +158,7 @@ sudo systemctl start telebambu
 - `/camera`, `/light`, `/stop_at`, `/pause`, `/resume`, `/speed` and `/skip` work on any printer
 - `/forcereclaim <printer> <user>` - Give a print to another user (logged)
 - `/restart <printer> [printer ...]` / `/restartall` - Reboot and reconnect printers
+- `/home <printer> [printer ...]` - Home the axes of idle printers (refused while printing)
 - `/printer list|add|edit|del` - Manage printers in `config.yml`, e.g. `/printer add 25 AA:BB:CC:DD:EE:FF 192.168.1.125 12345678 SERIAL`, `/printer edit 25 ip 192.168.1.126`
 - `/staff edit <mod|user> <user>` - Add or remove mods
 

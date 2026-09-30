@@ -35,6 +35,7 @@ ADMIN_HELP = (
     "/forcereclaim <printer> <user> - Give a print to someone else\n"
     "/restart <printer> [printer ...] - Reboot printers\n"
     "/restartall - Reboot every printer\n"
+    "/home <printer> [printer ...] - Home the axes of idle printers\n"
     "/printer list - Show configured printers\n"
     "/printer add <printer> <mac> <ip> <code> <serial_no> - Add a printer\n"
     "/printer edit <printer> <mac|ip|code|serial_no> <value> - Change a printer\n"

@@ -95,6 +95,7 @@ class BotHandlers:
             "forcereclaim": self.cmd_forcereclaim,
             "restart": self.cmd_restart,
             "restartall": self.cmd_restartall,
+            "home": self.cmd_home,
             "staff": self.cmd_staff,
             "config": self.cmd_config,
             "printer": self.cmd_printer,
@@ -851,6 +852,38 @@ class BotHandlers:
         if not await self._require_admin(update):
             return
         await self._restart_many(update, self.pm.numbers())
+
+    async def cmd_home(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only: home the axes of idle printers."""
+        reply = update.effective_message.reply_text
+        if not await self._require_admin(update):
+            return
+        if not context.args:
+            await reply(f"Usage: /home <printer> [printer ...]\nAvailable printers: {self.pm.numbers_text()}")
+            return
+        invalid = [arg for arg in context.args if not arg.isdigit() or int(arg) not in self.pm]
+        if invalid:
+            await reply(f"Invalid printer number(s): {', '.join(invalid)}. Use {self.pm.numbers_text()}")
+            return
+
+        results = []
+        homed = []
+        for num in dict.fromkeys(int(arg) for arg in context.args):
+            printer = self.pm.get_online_printer(num)
+            if not printer:
+                results.append(f"Printer {num} is not connected.")
+            elif printer.get_state() in (GcodeState.RUNNING, GcodeState.PAUSE, GcodeState.PREPARE):
+                # Homing moves the toolhead and bed, which would ruin a print in progress
+                results.append(f"Printer {num} is busy ({printer.get_state().name}), not homing.")
+            elif printer.home_printer():
+                homed.append(num)
+                results.append(f"Printer {num} is homing.")
+            else:
+                results.append(f"Failed to home Printer {num}.")
+        if homed:
+            await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} homed "
+                                      f"Printer(s) {', '.join(map(str, homed))}.")
+        await reply("\n".join(results))
 
     async def cmd_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List staff roles (anyone) or change someone's role (owner/admin, by rank)."""
