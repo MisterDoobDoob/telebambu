@@ -16,6 +16,8 @@ CAMERA_MAX_POLLS = 10
 PAUSE_NOTIFY_COOLDOWN = 60  # seconds
 # States a printer can be in right before a new print starts running
 PRE_PRINT_STATES = (GcodeState.FINISH, GcodeState.IDLE, GcodeState.PREPARE)
+# How long to wait for a removed printer to disconnect before giving up on it
+DISCONNECT_TIMEOUT = 10  # seconds
 # States where the printer is not in use
 IDLE_STATES = (GcodeState.IDLE, GcodeState.FINISH, GcodeState.UNKNOWN)
 
@@ -157,6 +159,27 @@ class PrinterManager:
             except Exception as e:
                 if first_failure:
                     print(f'Failed to reconnect printer {num}: {e}')
+
+    async def add_printer(self, num: int, config: PrinterConfig, log_fn):
+        self.slots[num] = PrinterSlot(ip=config.ip, access_code=config.access_code, serial=config.serial, mac=config.mac)
+        await self._connect(num, log_fn)
+
+    async def remove_printer(self, num: int):
+        """Forget a printer and disconnect it in the background."""
+        slot = self.slots.pop(num, None)
+        self._logged_disconnected.discard(num)
+        if slot and slot.printer:
+            # disconnect() joins the camera thread, which can block for a long time on an
+            # unreachable printer; run it off the event loop and stop waiting after a while
+            try:
+                await asyncio.wait_for(asyncio.to_thread(slot.printer.disconnect), DISCONNECT_TIMEOUT)
+            except Exception as e:
+                print(f'Printer {num} did not disconnect cleanly: {e}')
+
+    async def replace_printer(self, num: int, config: PrinterConfig, log_fn):
+        """Reconnect a printer with new connection details."""
+        await self.remove_printer(num)
+        await self.add_printer(num, config, log_fn)
 
     def disconnect_all(self):
         for num, slot in self.slots.items():

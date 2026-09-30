@@ -102,3 +102,14 @@ def config_text(settings, keys) -> str:
     lines = ["Config (change with /config set <key> <value>):"]
     lines += [f"- {key}: {getattr(settings, key)}" for key in keys]
     return "\n".join(lines)
+
+
+def printer_list_text(printers: dict, printer_manager) -> str:
+    """Admin view of configured printers. Access codes are never shown."""
+    if not printers:
+        return "No printers configured. Add one with /printer add."
+    lines = ["Printers:"]
+    for num, config in sorted(printers.items()):
+        online = "online" if printer_manager.get_online_printer(num) else "offline"
+        lines.append(f"{num}: {config.ip} | MAC {config.mac or '-'} | SN {config.serial} | {online}")
+    return "\n".join(lines)

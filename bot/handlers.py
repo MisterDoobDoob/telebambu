@@ -1,4 +1,6 @@
+import ipaddress
 import re
+from dataclasses import replace
 
 from telegram import Update, CallbackQuery, InputFile, MessageEntity
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
@@ -8,7 +10,7 @@ from printers import PrinterManager
 from . import ui
 from .messages import MessageService
 from .telegram_bot import get_bot_context, parse_chat_id
-from settings import Settings
+from settings import PrinterConfig, Settings
 
 NOTIFY_USAGE = "Usage: /notify [printer] <layer> or /notify [printer] <percent>%"
 NOTIFY_EVERY_USAGE = "Usage: /notify_every [printer] layers <number>, time <minutes>, percent <number>, or off"
@@ -17,6 +19,16 @@ CONFIG_USAGE = "Usage: /config or /config set <chat_id|status_chat_id|log_chat_i
 # Settings the owner can change at runtime; chat targets are 'chat_id' or 'chat_id/thread_id'
 CONFIG_KEYS = ("chat_id", "status_chat_id", "log_chat_id", "update_interval")
 MIN_UPDATE_INTERVAL = 1  # seconds
+PRINTER_USAGE = (
+    "Usage:\n"
+    "/printer list\n"
+    "/printer add <printer> <mac> <ip> <code> <serial_no>\n"
+    "/printer edit <printer> <mac|ip|code|serial_no> <value>\n"
+    "/printer del <printer>"
+)
+# /printer edit field names -> PrinterConfig attributes
+PRINTER_FIELDS = {"mac": "mac", "ip": "ip", "code": "access_code", "serial_no": "serial"}
+MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
 STAFF_USAGE = "Usage: /staff list [user] or /staff edit <owner|admin|mod|user> <user>"
 
 
@@ -66,6 +78,7 @@ class BotHandlers:
             "restart": self.cmd_restart,
             "staff": self.cmd_staff,
             "config": self.cmd_config,
+            "printer": self.cmd_printer,
         }
         for name, callback in commands.items():
             app.add_handler(CommandHandler(name, callback))
@@ -550,6 +563,104 @@ class BotHandlers:
         await self.ms.log_message(f"Config change: {self.storage.display_name(update.effective_user.id)} "
                                   f"set {key} from {old} to {value}.")
         await reply(f"{key} set to {value}.")
+
+    @staticmethod
+    def _printer_field_error(field: str, value: str) -> str | None:
+        if field == "ip":
+            try:
+                ipaddress.ip_address(value)
+            except ValueError:
+                return f"'{value}' is not a valid IP address."
+        elif field == "mac" and not MAC_RE.match(value):
+            return f"'{value}' is not a valid MAC address (e.g. AA:BB:CC:DD:EE:FF)."
+        elif not value:
+            return f"{field} can't be empty."
+        return None
+
+    async def _forget_secret(self, update: Update):
+        """Delete a command containing an access code from group chats (needs delete rights)."""
+        message = update.effective_message
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+    async def cmd_printer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only: list, add, edit or delete printers in config.yml."""
+        reply = update.effective_message.reply_text
+        if not await self._require_admin(update):
+            return
+        # Allow "/printer add 3 mac, ip, code, serial" as well as space separated values
+        args = " ".join(context.args).replace(",", " ").split()
+        action = args[0].lower() if args else ""
+
+        if action == "list":
+            await reply(ui.printer_list_text(self.settings.printers, self.pm))
+            return
+        if action not in ("add", "edit", "del") or len(args) < 2 or not args[1].isdigit() or int(args[1]) < 1:
+            await reply(PRINTER_USAGE)
+            return
+
+        num = int(args[1])
+        actor = self.storage.display_name(update.effective_user.id)
+        printers = self.settings.printers
+
+        if action == "add":
+            if len(args) != 6:
+                await reply(PRINTER_USAGE)
+                return
+            if num in printers:
+                await reply(f"Printer {num} already exists. Use /printer edit or /printer del.")
+                return
+            config = PrinterConfig(mac=args[2], ip=args[3], access_code=args[4], serial=args[5])
+            for field in ("mac", "ip"):
+                error = self._printer_field_error(field, getattr(config, field))
+                if error:
+                    await reply(error)
+                    return
+            await self._forget_secret(update)
+            printers[num] = config
+            self.settings.save()
+            await self.pm.add_printer(num, config, self.ms.log_message)
+            await self.ms.log_message(f"Printer change: {actor} added Printer {num} ({config.ip}).")
+            await reply(f"Printer {num} added ({config.ip}).")
+            return
+
+        if num not in printers:
+            await reply(f"Printer {num} doesn't exist. Printers: {self.pm.numbers_text()}")
+            return
+
+        if action == "del":
+            del printers[num]
+            self.settings.save()
+            await self.pm.remove_printer(num)
+            if self.storage.end_print(num):
+                await self.ms.log_message(f"Printer {num}'s active print session was closed.")
+            await self.ms.log_message(f"Printer change: {actor} removed Printer {num}.")
+            await reply(f"Printer {num} removed.")
+            return
+
+        # edit
+        if len(args) != 4 or args[2].lower() not in PRINTER_FIELDS:
+            await reply(PRINTER_USAGE)
+            return
+        field, value = args[2].lower(), args[3]
+        error = self._printer_field_error(field, value)
+        if error:
+            await reply(error)
+            return
+        if field == "code":
+            await self._forget_secret(update)
+        config = replace(printers[num], **{PRINTER_FIELDS[field]: value})
+        printers[num] = config
+        self.settings.save()
+        # The MAC isn't used for the connection, so only reconnect for the other fields
+        if field != "mac":
+            await self.pm.replace_printer(num, config, self.ms.log_message)
+        shown = "****" if field == "code" else value
+        await self.ms.log_message(f"Printer change: {actor} set Printer {num} {field} to {shown}.")
+        await reply(f"Printer {num} {field} set to {shown}." + (" Reconnecting..." if field != "mac" else ""))
 
     # --- Callback buttons ---
 
