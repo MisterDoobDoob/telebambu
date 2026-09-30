@@ -159,6 +159,7 @@ sudo systemctl start telebambu
 - `/forcereclaim <printer> <user>` - Give a print to another user (logged)
 - `/restart <printer> [printer ...]` / `/restartall` - Reboot and reconnect printers
 - `/home <printer> [printer ...]` - Home the axes of idle printers (refused while printing)
+- `/print <printer> [plate] [ams|ext]` - Remote printing, for testing: send a sliced `.3mf` (up to 20 MB) with this as its caption, or reply to one with it. The bot uploads it to the printer's SD card and starts the plate. Filament N in the project is printed from AMS tray N; `ext` uses the external spool instead
 - `/printer list|add|edit|del` - Manage printers in `config.yml`, e.g. `/printer add 25 AA:BB:CC:DD:EE:FF 192.168.1.125 12345678 SERIAL`, `/printer edit 25 ip 192.168.1.126`
 - `/staff edit <mod|user> <user>` - Add or remove mods
 

@@ -88,3 +88,32 @@ def plate_objects(data: bytes, plate_number: int) -> list[PrintObject]:
             return [PrintObject(int(obj.get('identify_id')), obj.get('name') or f"Object {obj.get('identify_id')}")
                     for obj in plate.iter('object') if obj.get('identify_id')]
     raise ValueError(f'plate {plate_number} is not in this file')
+
+
+def upload(ip: str, access_code: str, path: str, data: bytes):
+    """Upload a file to the printer's SD card. Raises on failure."""
+    with ftp_session(ip, access_code) as ftp:
+        ftp.storbinary(f'STOR {path}', io.BytesIO(data), blocksize=32768)
+
+
+def sliced_plates(data: bytes) -> list[int]:
+    """Plate numbers that have sliced gcode in a 3MF. Raises ValueError if it isn't a 3MF."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+    except zipfile.BadZipFile:
+        raise ValueError('this is not a valid 3MF file') from None
+    return sorted(int(m[1]) for name in names if (m := re.fullmatch(r'Metadata/plate_(\d+)\.gcode', name)))
+
+
+def ams_mapping(data: bytes, plate_number: int) -> list[int]:
+    """AMS tray for each of the project's filaments, assuming filament N is loaded in tray N.
+
+    The printer expects one entry per project filament; filaments the plate
+    doesn't use are -1.
+    """
+    for index, plate in _plate_elements(data):
+        if index == plate_number:
+            used = {int(f.get('id')) for f in plate.iter('filament') if f.get('id')}
+            return [n - 1 if n in used else -1 for n in range(1, max(used, default=1) + 1)]
+    raise ValueError(f'plate {plate_number} is not in this file')

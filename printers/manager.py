@@ -19,6 +19,8 @@ PAUSE_NOTIFY_COOLDOWN = 60  # seconds
 PRE_PRINT_STATES = (GcodeState.FINISH, GcodeState.IDLE, GcodeState.PREPARE)
 # How long to wait for a removed printer to disconnect before giving up on it
 DISCONNECT_TIMEOUT = 10  # seconds
+# How long uploading a print file over FTP may take
+UPLOAD_TIMEOUT = 5 * 60  # seconds
 # How long a reboot + reconnect may take before it is reported as failed
 RESTART_TIMEOUT = 30  # seconds
 # Bambu print speed profiles, as reported in spd_lvl and set with the print_speed command
@@ -352,6 +354,18 @@ class PrinterManager:
         objects = files.plate_objects(data, files.plate_from_gcode_file(gcode_file))
         slot.objects_cache = (key, objects)
         return objects
+
+    async def upload_and_print(self, num: int, filename: str, data: bytes, plate: int,
+                               use_ams: bool, mapping: list[int]):
+        """Upload a sliced 3MF to the printer's SD card and start printing a plate. Raises on failure."""
+        printer = self.get_online_printer(num)
+        if not printer:
+            raise ConnectionError(f'Printer {num} is not connected.')
+        slot = self.slots[num]
+        await asyncio.wait_for(asyncio.to_thread(files.upload, slot.ip, slot.access_code, f'/{filename}', data),
+                               UPLOAD_TIMEOUT)
+        if not printer.start_print(filename, plate, use_ams=use_ams, ams_mapping=mapping):
+            raise RuntimeError('the printer did not accept the print command')
 
     def skipped_objects(self, num: int) -> list[int]:
         printer = self.get_online_printer(num)

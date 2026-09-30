@@ -6,11 +6,13 @@ from dataclasses import replace
 
 from telegram import Update, CallbackQuery, InputFile, InputMediaPhoto, MessageEntity
 from telegram.constants import ParseMode
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
+from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
+                          TypeHandler, filters)
 from bambulabs_api import GcodeState
 
 from data import Role, Storage, can_assign
-from printers import PrinterManager, SPEED_LEVELS
+from printers import EXTERNAL_SPOOL_TRAY, PrinterManager, SPEED_LEVELS
+from printers import files
 from . import ui
 from .messages import MessageService
 from .telegram_bot import get_bot_context, parse_chat_id
@@ -35,6 +37,12 @@ PRINTER_FIELDS = {"mac": "mac", "ip": "ip", "code": "access_code", "serial_no": 
 MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
 NOTIFY_USER_USAGE = ("Usage: /notify_user <printer> <user> [user ...] to add, "
                      "/notify_user <printer> remove <user> [user ...] to remove, or /notify_user <printer> to list")
+PRINT_USAGE = ("Usage: send a sliced .3mf with the caption /print <printer> [plate] [ams|ext], "
+               "or reply to one with that command. Filament N is printed from AMS tray N.")
+# Telegram bots can only download files up to 20 MB
+MAX_PRINT_FILE_SIZE = 20 * 1024 * 1024
+# States in which a printer can start a new print
+READY_STATES = (GcodeState.IDLE, GcodeState.FINISH, GcodeState.FAILED)
 STAFF_USAGE = "Usage: /staff list [user] or /staff edit <owner|admin|mod|user> <user>"
 
 
@@ -96,12 +104,16 @@ class BotHandlers:
             "restart": self.cmd_restart,
             "restartall": self.cmd_restartall,
             "home": self.cmd_home,
+            "print": self.cmd_print,
             "staff": self.cmd_staff,
             "config": self.cmd_config,
             "printer": self.cmd_printer,
         }
         for name, callback in commands.items():
             app.add_handler(CommandHandler(name, callback))
+        # Commands in a document's caption don't reach CommandHandler
+        app.add_handler(MessageHandler(filters.Document.ALL & filters.CaptionRegex(r"^/print(@\w+)?(\s|$)"),
+                                       self.cmd_print_caption))
 
         callbacks = {
             _callback_pattern("claim", "claim"): self.cb_claim,
@@ -884,6 +896,79 @@ class BotHandlers:
             await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} homed "
                                       f"Printer(s) {', '.join(map(str, homed))}.")
         await reply("\n".join(results))
+
+    async def cmd_print(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only (testing): print a 3MF from a replied-to document."""
+        reply_to = getattr(update.effective_message, "reply_to_message", None)
+        await self._print_document(update, context, context.args, reply_to.document if reply_to else None)
+
+    async def cmd_print_caption(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only (testing): print a 3MF sent with /print in its caption."""
+        message = update.effective_message
+        await self._print_document(update, context, message.caption.split()[1:], message.document)
+
+    async def _print_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE, args: list[str], document):
+        reply = update.effective_message.reply_text
+        if not await self._require_admin(update):
+            return
+        if not document or not args or not args[0].isdigit():
+            await reply(PRINT_USAGE)
+            return
+        printer_num = int(args[0])
+        options = [arg.lower() for arg in args[1:]]
+        plate = next((int(opt) for opt in options if opt.isdigit()), None)
+        use_ams = None if not {"ams", "ext"} & set(options) else "ams" in options
+        if any(not (opt.isdigit() or opt in ("ams", "ext")) for opt in options):
+            await reply(PRINT_USAGE)
+            return
+
+        name = document.file_name or "print.3mf"
+        if not name.lower().endswith(".3mf"):
+            await reply("Only sliced .3mf files can be printed.")
+            return
+        if document.file_size and document.file_size > MAX_PRINT_FILE_SIZE:
+            await reply("That file is too big. Telegram only lets bots download files up to 20 MB.")
+            return
+        if printer_num not in self.pm:
+            await reply(f"Invalid printer number. Use {self.pm.numbers_text()}")
+            return
+        printer = self.pm.get_online_printer(printer_num)
+        if not printer:
+            await reply(f"Printer {printer_num} is not connected.")
+            return
+        if printer.get_state() not in READY_STATES:
+            await reply(f"Printer {printer_num} is busy ({printer.get_state().name}).")
+            return
+
+        data = bytes(await (await context.bot.get_file(document.file_id)).download_as_bytearray())
+        try:
+            plates = files.sliced_plates(data)
+            if not plates:
+                raise ValueError("this 3MF has no sliced plates. Export it with File > Export > Export plate sliced file")
+            if plate is None and len(plates) > 1:
+                raise ValueError(f"it has several plates ({', '.join(map(str, plates))}), add the plate number")
+            plate = plate or plates[0]
+            if plate not in plates:
+                raise ValueError(f"plate {plate} isn't sliced in this file (sliced: {', '.join(map(str, plates))})")
+            mapping = files.ams_mapping(data, plate)
+        except ValueError as e:
+            await reply(f"Can't print {name}: {e}.")
+            return
+        if use_ams is None:
+            use_ams = any(tray.tray_id != EXTERNAL_SPOOL_TRAY for tray in self.pm.filament(printer_num))
+
+        # Keep the name simple for the printer's FTP server and file browser
+        filename = re.sub(r"[^\w.-]", "_", name)
+        await reply(f"Uploading {name} to Printer {printer_num}...")
+        try:
+            await self.pm.upload_and_print(printer_num, filename, data, plate, use_ams, mapping if use_ams else [0])
+        except Exception as e:
+            await reply(f"Failed to start {name} on Printer {printer_num}: {e}")
+            return
+        source = "AMS" if use_ams else "external spool"
+        await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} started {name} "
+                                  f"(plate {plate}, {source}) on Printer {printer_num}.")
+        await reply(f"Started {name} (plate {plate}, {source}) on Printer {printer_num}.")
 
     async def cmd_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List staff roles (anyone) or change someone's role (owner/admin, by rank)."""
