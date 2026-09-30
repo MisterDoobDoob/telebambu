@@ -8,6 +8,7 @@ import bambulabs_api as bl
 from bambulabs_api import GcodeState, PrintStatus, Printer
 
 from settings import PrinterConfig
+from . import files
 
 # How long to wait for a fresh camera frame after turning the light on
 CAMERA_POLL_INTERVAL = 2  # seconds
@@ -105,6 +106,8 @@ class PrinterSlot:
     last_paused_time: float = 0.0
     connected_at: float = 0.0
     camera_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Objects of the current print, keyed by its file so a new print re-reads them
+    objects_cache: tuple[str, list[files.PrintObject]] | None = None
 
 
 class PrinterManager:
@@ -280,6 +283,32 @@ class PrinterManager:
             return False
         # Printer.set_print_speed() only accepts 0-3, but the printer's profiles are 1-4
         return bool(printer.mqtt_client.set_print_speed_lvl(level))
+
+    async def print_objects(self, num: int) -> list[files.PrintObject]:
+        """Objects on the plate being printed, read from the print's 3MF over FTP. Raises on failure."""
+        printer = self.get_online_printer(num)
+        if not printer:
+            raise ConnectionError(f'Printer {num} is not connected.')
+        slot = self.slots[num]
+        gcode_file, subtask = printer.get_file_name() or '', printer.subtask_name() or ''
+        key = f'{subtask}|{gcode_file}'
+        if slot.objects_cache and slot.objects_cache[0] == key:
+            return slot.objects_cache[1]
+
+        candidates = files.print_file_candidates(gcode_file, subtask)
+        _path, data = await asyncio.wait_for(
+            asyncio.to_thread(files.download_first, slot.ip, slot.access_code, candidates), files.FTP_TIMEOUT * 2)
+        objects = files.plate_objects(data, files.plate_from_gcode_file(gcode_file))
+        slot.objects_cache = (key, objects)
+        return objects
+
+    def skipped_objects(self, num: int) -> list[int]:
+        printer = self.get_online_printer(num)
+        return list(printer.get_skipped_objects() or []) if printer else []
+
+    def skip_objects(self, num: int, identify_ids: list[int]) -> bool:
+        printer = self.get_online_printer(num)
+        return bool(printer and printer.skip_objects(identify_ids))
 
     # --- State polling ---
 

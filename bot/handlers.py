@@ -87,6 +87,7 @@ class BotHandlers:
             "pause": self.cmd_pause,
             "resume": self.cmd_resume,
             "speed": self.cmd_speed,
+            "skip": self.cmd_skip,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
             "claim": self.cmd_claim,
@@ -539,6 +540,58 @@ class BotHandlers:
         await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} set Printer {printer_num} "
                                   f"speed to {SPEED_LEVELS[level]}.")
         await reply(f"Printer {printer_num} speed set to {SPEED_LEVELS[level]}.")
+
+    async def cmd_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List the objects on the plate, or stop printing some of them (claimer or admin)."""
+        reply = update.effective_message.reply_text
+        usage = "Usage: /skip [printer] to list objects, /skip <printer> <object> [object ...] to skip them"
+        # The printer is always the first number, so "/skip 2" can never skip an object by mistake
+        resolved = await self._resolve_printer(update, context.args, admin_any=True, usage=usage)
+        if not resolved:
+            return
+        printer_num, args = resolved
+        printer = self.pm.get_online_printer(printer_num)
+        if not printer:
+            await reply(f"Printer {printer_num} is not connected.")
+            return
+        if printer.get_state() not in (GcodeState.RUNNING, GcodeState.PAUSE):
+            await reply(f"Printer {printer_num} isn't printing.")
+            return
+        if any(not arg.isdigit() for arg in args):
+            await reply(usage)
+            return
+
+        try:
+            objects = await self.pm.print_objects(printer_num)
+        except Exception as e:
+            await reply(f"Couldn't read the objects on Printer {printer_num}: {e}")
+            return
+        skipped = set(self.pm.skipped_objects(printer_num))
+
+        if not args:
+            await reply(ui.objects_text(printer_num, objects, skipped))
+            return
+
+        choices = list(dict.fromkeys(int(arg) for arg in args))
+        invalid = [n for n in choices if not 1 <= n <= len(objects)]
+        if invalid:
+            await reply(f"Invalid object number(s): {', '.join(map(str, invalid))}. Use /skip {printer_num} to list them.")
+            return
+        chosen = [objects[n - 1] for n in choices if objects[n - 1].identify_id not in skipped]
+        if not chosen:
+            await reply("Those objects are already skipped.")
+            return
+        if skipped | {obj.identify_id for obj in chosen} >= {obj.identify_id for obj in objects}:
+            await reply("That would skip every object. Use /stop_at or stop the print instead.")
+            return
+        if not self.pm.skip_objects(printer_num, [obj.identify_id for obj in chosen]):
+            await reply(f"Failed to skip objects on Printer {printer_num}.")
+            return
+
+        names = ", ".join(obj.name for obj in chosen)
+        await self.ms.log_message(f"{self.storage.display_name(update.effective_user.id)} skipped {names} "
+                                  f"on Printer {printer_num}.")
+        await reply(f"Skipping {names} on Printer {printer_num}.")
 
     async def cmd_stop_at(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop a print automatically once it reaches a layer (claimer or admin)."""

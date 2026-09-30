@@ -20,6 +20,8 @@ USER_HELP = (
     "/pause [printer] - Pause your print\n"
     "/resume [printer] - Resume your paused print\n"
     "/speed [printer] <silent|standard|sport|ludicrous> - Change your print's speed\n"
+    "/skip [printer] - List the objects on your plate\n"
+    "/skip <printer> <object> [object ...] - Stop printing those objects\n"
     "/camera [printer] - View camera image from your printer\n"
     "/light [printer] - Toggle your printer's light\n"
     "/staff [list [user]] - See who the owner, admins and mods are\n\n"
@@ -29,7 +31,7 @@ USER_HELP = (
 
 ADMIN_HELP = (
     "Admin commands:\n"
-    "/camera, /light, /stop_at, /pause, /resume, /speed <printer> - Work on any printer\n"
+    "/camera, /light, /stop_at, /pause, /resume, /speed, /skip <printer> - Work on any printer\n"
     "/forcereclaim <printer> <user> - Give a print to someone else\n"
     "/restart <printer> [printer ...] - Reboot printers\n"
     "/restartall - Reboot every printer\n"
@@ -205,3 +207,12 @@ def code_block(title: str, lines: list[str]) -> str:
 def temp(value) -> str:
     """Format a temperature reading, which the printer may not report."""
     return f"{value:.0f}°C" if isinstance(value, (int, float)) else "n/a"
+
+
+def objects_text(printer_num: int, objects, skipped: set[int]) -> str:
+    if not objects:
+        return f"No objects found for Printer {printer_num}'s print."
+    lines = [f"Objects on Printer {printer_num} (skip with /skip {printer_num} <number> ...):"]
+    for n, obj in enumerate(objects, start=1):
+        lines.append(f"{n}. {obj.name}" + (" (skipped)" if obj.identify_id in skipped else ""))
+    return "\n".join(lines)
