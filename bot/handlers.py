@@ -7,6 +7,7 @@ from dataclasses import replace
 from telegram import Update, CallbackQuery, InputFile, InputMediaPhoto, MessageEntity
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
+from bambulabs_api import GcodeState
 
 from data import Role, Storage, can_assign
 from printers import PrinterManager
@@ -83,6 +84,8 @@ class BotHandlers:
             "notify_every": self.cmd_notify_every,
             "notify_user": self.cmd_notify_user,
             "stop_at": self.cmd_stop_at,
+            "pause": self.cmd_pause,
+            "resume": self.cmd_resume,
             "camera": self.cmd_camera,
             "light": self.cmd_light,
             "claim": self.cmd_claim,
@@ -449,6 +452,51 @@ class BotHandlers:
         self.storage.set_notify_every(printer_num, notify_type, value, initial_value)
         await reply(f"Recurring camera notifications set every {value} {NOTIFY_EVERY_UNITS[notify_type]} "
                     f"on Printer {printer_num}.")
+
+    async def _pause_or_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE, pause: bool):
+        """Pause a running print or resume a paused one (claimer or admin)."""
+        verb = "pause" if pause else "resume"
+        resolved = await self._resolve_printer(update, context.args, admin_any=True, usage=f"Usage: /{verb} <printer>")
+        if not resolved:
+            return
+        printer_num, _ = resolved
+        reply = update.effective_message.reply_text
+        printer = self.pm.get_online_printer(printer_num)
+        if not printer:
+            await reply(f"Printer {printer_num} is not connected.")
+            return
+
+        needed = GcodeState.RUNNING if pause else GcodeState.PAUSE
+        state = printer.get_state()
+        if state != needed:
+            await reply(f"Printer {printer_num} can't be {verb}d while it is {state.name}.")
+            return
+        try:
+            ok = printer.pause_print() if pause else printer.resume_print()
+        except Exception as e:
+            ok, error = False, e
+        else:
+            error = None
+        if not ok:
+            await reply(f"Failed to {verb} Printer {printer_num}" + (f": {error}" if error else "."))
+            return
+
+        actor = self.storage.display_name(update.effective_user.id)
+        await self.ms.log_message(f"{actor} {verb}d Printer {printer_num}.")
+        # Let the claimer know when someone else (an admin) paused or resumed their print
+        session = self.storage.get_print(printer_num)
+        if session and session.claimed_by and session.claimed_by != update.effective_user.id:
+            try:
+                await context.bot.send_message(chat_id=session.claimed_by, text=f"{actor} {verb}d Printer {printer_num}.")
+            except Exception:
+                pass
+        await reply(f"Printer {printer_num} {verb}d.")
+
+    async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._pause_or_resume(update, context, pause=True)
+
+    async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._pause_or_resume(update, context, pause=False)
 
     async def cmd_stop_at(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop a print automatically once it reaches a layer (claimer or admin)."""

@@ -146,12 +146,13 @@ sudo systemctl start telebambu
 - `/notify_every [printer] layers|time|percent <number>` - Recurring camera snapshots during a print (`off` to disable)
 - `/notify_user <printer> <user> [user ...]` - Also notify other users about a claimed print (`remove` to stop, no users to list); the claimer and anyone already notified can use it
 - `/stop_at [printer] <layer>` - Stop the print automatically at a layer (`off` to cancel)
+- `/pause [printer]` / `/resume [printer]` - Pause or resume your print
 - `/camera [printer]` - Fresh camera snapshot; in your DM it has a Refresh button
 - `/light [printer]` - Toggle the printer light
 - `/staff [list [user]]` - See the owner, admins and mods, or one user's role
 
 **Admins** (the owner can do all of these too)
-- `/camera`, `/light` and `/stop_at` work on any printer
+- `/camera`, `/light`, `/stop_at`, `/pause` and `/resume` work on any printer
 - `/forcereclaim <printer> <user>` - Give a print to another user (logged)
 - `/restart <printer> [printer ...]` / `/restartall` - Reboot and reconnect printers
 - `/printer list|add|edit|del` - Manage printers in `config.yml`, e.g. `/printer add 25 AA:BB:CC:DD:EE:FF 192.168.1.125 12345678 SERIAL`, `/printer edit 25 ip 192.168.1.126`

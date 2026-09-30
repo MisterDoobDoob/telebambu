@@ -17,6 +17,8 @@ USER_HELP = (
     "/notify_every [printer] off - Disable recurring camera snapshots\n"
     "/notify_user <printer> [remove] <user> [user ...] - Notify other users about a print\n"
     "/stop_at [printer] <layer> - Stop your print at a layer (or 'off')\n"
+    "/pause [printer] - Pause your print\n"
+    "/resume [printer] - Resume your paused print\n"
     "/camera [printer] - View camera image from your printer\n"
     "/light [printer] - Toggle your printer's light\n"
     "/staff [list [user]] - See who the owner, admins and mods are\n\n"
@@ -26,7 +28,7 @@ USER_HELP = (
 
 ADMIN_HELP = (
     "Admin commands:\n"
-    "/camera, /light, /stop_at <printer> - Work on any printer\n"
+    "/camera, /light, /stop_at, /pause, /resume <printer> - Work on any printer\n"
     "/forcereclaim <printer> <user> - Give a print to someone else\n"
     "/restart <printer> [printer ...] - Reboot printers\n"
     "/restartall - Reboot every printer\n"
