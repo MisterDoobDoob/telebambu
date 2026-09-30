@@ -180,7 +180,9 @@ class MessageService:
         session = self.storage.get_print(printer_num)
         if session and session.claimed_by:
             try:
-                await self._send(session.claimed_by, message, image, reply_markup=ui.unclaim_keyboard(printer_num))
+                # Camera images get a refresh button so the claimer can check again from the DM
+                keyboard = ui.camera_keyboard(printer_num, unclaim=True) if image else ui.unclaim_keyboard(printer_num)
+                await self._send(session.claimed_by, message, image, reply_markup=keyboard)
             except Exception as e:
                 print(f'Failed to notify claimer of Printer {printer_num}: {e}')
             await self._notify_watchers(session, message, image)

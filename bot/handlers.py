@@ -1,9 +1,10 @@
 import asyncio
 import ipaddress
 import re
+import time
 from dataclasses import replace
 
-from telegram import Update, CallbackQuery, InputFile, MessageEntity
+from telegram import Update, CallbackQuery, InputFile, InputMediaPhoto, MessageEntity
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, TypeHandler
 
@@ -101,6 +102,7 @@ class BotHandlers:
             _callback_pattern("dmpref", "dm_pref", ":(chat|dm)"): self.cb_dm_preference,
             _callback_pattern("layer2", "layer2_toggle"): self.cb_layer2_toggle,
             _callback_pattern("unclaim", "unclaim"): self.cb_unclaim,
+            r"^cam:\d+$": self.cb_refresh_camera,
             r"^help$": self.cb_help,
         }
         for pattern, callback in callbacks.items():
@@ -567,9 +569,14 @@ class BotHandlers:
             await message.reply_text(f"Printer {printer_num} is not connected or has no camera frame.")
             return
 
+        # In the claimer's DM, offer a button to swap in a fresh frame later
+        session = self.storage.get_print(printer_num)
+        in_claimer_dm = (message.chat.type == "private" and session is not None
+                         and session.claimed_by == update.effective_user.id)
         await message.reply_photo(
             photo=InputFile(frame, filename=f"printer_{printer_num}.jpg"),
             caption=f"Camera image from Printer {printer_num}",
+            reply_markup=ui.camera_keyboard(printer_num) if in_claimer_dm else None,
         )
 
     async def cmd_light(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -972,6 +979,27 @@ class BotHandlers:
             await query.edit_message_text(reply_text)
         elif query.message:
             await query.message.reply_text(reply_text)
+
+    async def cb_refresh_camera(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Replace a camera image in the claimer's DM with a fresh frame."""
+        query = update.callback_query
+        printer_num, _ = _parse_callback(query)
+        session = self.storage.get_print(printer_num)
+        if not session or session.claimed_by != query.from_user.id:
+            await query.answer("You can only refresh the camera of a print you have claimed.", show_alert=True)
+            return
+        # Capturing takes a few seconds; answer first so the button doesn't time out
+        await query.answer("Fetching a fresh image...")
+
+        frame = await self.pm.get_camera_frame(printer_num)
+        if not frame:
+            await query.message.reply_text(f"Printer {printer_num} is not connected or has no camera frame.")
+            return
+        await query.edit_message_media(
+            media=InputMediaPhoto(InputFile(frame, filename=f"printer_{printer_num}.jpg"),
+                                  caption=f"Camera image from Printer {printer_num} (updated {time.strftime('%H:%M:%S')})"),
+            reply_markup=query.message.reply_markup,
+        )
 
     async def cb_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query

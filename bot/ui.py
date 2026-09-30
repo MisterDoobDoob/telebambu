@@ -50,6 +50,18 @@ def unclaim_keyboard(printer_num: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim:{printer_num}")]])
 
 
+def refresh_camera_button(printer_num: int) -> InlineKeyboardButton:
+    return InlineKeyboardButton("Refresh Camera", callback_data=f"cam:{printer_num}")
+
+
+def camera_keyboard(printer_num: int, unclaim: bool = False) -> InlineKeyboardMarkup:
+    """Keyboard for camera images sent to the claimer's DM."""
+    row = [refresh_camera_button(printer_num)]
+    if unclaim:
+        row.append(InlineKeyboardButton("Unclaim Print", callback_data=f"unclaim:{printer_num}"))
+    return InlineKeyboardMarkup([row])
+
+
 def start_dm_keyboard(bot_username: str, printer_num: int) -> InlineKeyboardMarkup:
     url = f"https://t.me/{bot_username}?start=claim-{printer_num}"
     return InlineKeyboardMarkup([[InlineKeyboardButton("Start DM with bot", url=url)]])
