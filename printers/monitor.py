@@ -251,14 +251,15 @@ class PrinterMonitor:
         printer = self.pm.get_online_printer(num)
         if not printer:
             return
-        self.storage.mark_stopped(num, layer)
         try:
             printer.stop_print()
         except Exception as e:
-            await self.ms.log_message(f'Failed to stop Printer {num} at layer {layer}: {e}')
+            # stop_at_layer is kept, so the next layer change tries again
+            await self.ms.log_message(f'Failed to send stop to Printer {num} at layer {layer}: {e}')
             return
-        await self.ms.log_message(f'Printer {num} stopped at layer {layer} (/stop_at).')
-        await self.ms.send_stopped_notification(num, layer, await self.pm.get_camera_frame(num))
+        # The print's end is reported by the state change it causes (FAILED), not here
+        self.storage.mark_stopped(num, layer)
+        await self.ms.log_message(f'Printer {num}: sent stop at layer {layer} (/stop_at).')
 
     async def _handle_layer_change(self, num: int, prev_layer: int, layer: int):
         session = self.storage.get_print(num)

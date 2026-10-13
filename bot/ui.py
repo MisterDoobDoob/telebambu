@@ -186,6 +186,16 @@ def watchers_text(printer_num: int, session: PrintSession, storage: Storage) -> 
     return f"Printer {printer_num} notifies {session.claimed_username} and: {names}"
 
 
+# /notify_every types and the unit each one counts in
+NOTIFY_EVERY_UNITS = {"layers": "layers", "time": "minutes", "percent": "%"}
+
+
+def every_text(notify_type: str, value) -> str:
+    """How often a /notify_every snapshot is sent, e.g. '10 layers', '5 minutes' or '10%'."""
+    unit = NOTIFY_EVERY_UNITS[notify_type]
+    return f"{value}{unit}" if unit == "%" else f"{value} {unit}"
+
+
 def session_extras(session: PrintSession) -> list[str]:
     """Short notes about a print's pending notifications and actions."""
     extras = []
@@ -195,8 +205,7 @@ def session_extras(session: PrintSession) -> list[str]:
         else:
             extras.append(f"notify at L{session.notify_layer}")
     if session.notify_every_type:
-        unit = {"layers": " layers", "time": " min", "percent": "%"}[session.notify_every_type]
-        extras.append(f"snapshot every {session.notify_every_value}{unit}")
+        extras.append(f"snapshot every {every_text(session.notify_every_type, session.notify_every_value)}")
     if session.stop_at_layer:
         extras.append(f"stop at L{session.stop_at_layer}")
     if session.watchers:

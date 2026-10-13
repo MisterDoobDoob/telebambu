@@ -21,6 +21,11 @@ LOG_THROTTLE = 5  # seconds between messages to the log chat
 FAIL_MESSAGE_TTL = 60 * 60 * 24  # delete failure notifications after 1 day
 
 
+def _is_cancel(error_code, reason: str) -> bool:
+    """Whether a FAILED state's error code is a cancel (or no error), as a requested stop gives."""
+    return not error_code or reason == "Printing was cancelled."
+
+
 class MessageService:
     def __init__(self, bot: Bot, context: BotContext, storage: Storage):
         self.bot = bot
@@ -91,10 +96,8 @@ class MessageService:
         session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
-        if session and session.stopped_at_layer:
-            message = f"Printer {printer_num} was stopped at layer {session.stopped_at_layer} as requested."
-        else:
-            message = f"Printer {printer_num} has finished printing."
+        # A print that ran to the end finished, even if a /stop_at stop was sent and didn't take
+        message = f"Printer {printer_num} has finished printing."
         if session and session.claimed_by:
             message += f" ({session.claimed_username})"
         if catchup:
@@ -115,11 +118,13 @@ class MessageService:
         session = self.storage.get_print(printer_num)
         await self._delete_started_message(session)
 
-        if session and session.stopped_at_layer:
+        reason = lookup_error(error_code)
+        if session and session.stopped_at_layer and _is_cancel(error_code, reason):
             # Stopping a print on request ends it the same way as a failure
             message = f"Printer {printer_num} was stopped at layer {session.stopped_at_layer} as requested."
         else:
-            message = f"Printer {printer_num} failed!\n{lookup_error(error_code)}"
+            # Includes a /stop_at stop that didn't take, followed by a real failure
+            message = f"Printer {printer_num} failed!\n{reason}"
         if catchup:
             message = ui.CATCHUP_TAG + message
         targets = []  # (chat_id, thread_id, label)
@@ -185,9 +190,6 @@ class MessageService:
         await self._notify_claimer(
             printer_num, f"Printer {printer_num}: Layer 2 complete! Your print is progressing well.", image)
         self.storage.mark_layer2_notified(printer_num)
-
-    async def send_stopped_notification(self, printer_num: int, layer: int, image: bytes | None = None):
-        await self._notify_claimer(printer_num, f"Printer {printer_num}: Stopping the print at layer {layer} as requested.", image)
 
     async def send_filament_notification(self, printer_num: int, message: str, image: bytes | None = None):
         await self._notify_claimer(printer_num, f"Printer {printer_num}: {message}", image)

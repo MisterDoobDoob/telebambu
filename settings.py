@@ -55,6 +55,10 @@ class Settings:
         os.replace(tmp_file, self.path)
 
 
+# Settings that may be left out of config.yml (or config.py, in upper case) to use the default
+OPTIONAL_KEYS = ('update_interval', 'stats_log_interval', 'auto_restart_printers')
+
+
 def _chat(value) -> Optional[str]:
     return None if value is None else str(value)
 
@@ -72,11 +76,10 @@ def _from_dict(data: dict, path: str) -> Settings:
         status_chat_id=_chat(data['status_chat_id']),
         owner_id=int(owner_id) if owner_id else None,
         log_chat_id=_chat(data.get('log_chat_id')),
-        update_interval=data.get('update_interval', 5),
-        stats_log_interval=data.get('stats_log_interval', 60 * 60),
-        auto_restart_printers=data.get('auto_restart_printers', True),
         printers=printers,
         path=path,
+        # Only keys that are set, so missing ones fall back to the Settings defaults
+        **{key: data[key] for key in OPTIONAL_KEYS if key in data},
     )
 
 
@@ -92,11 +95,9 @@ def _from_legacy_module(module, path: str) -> Settings:
         status_chat_id=_chat(module.STATUS_CHAT_ID),
         owner_id=getattr(module, 'OWNER_ID', None),
         log_chat_id=_chat(getattr(module, 'LOG_CHAT_ID', None)),
-        update_interval=getattr(module, 'UPDATE_INTERVAL', 5),
-        stats_log_interval=getattr(module, 'STATS_LOG_INTERVAL', 60 * 60),
-        auto_restart_printers=getattr(module, 'AUTO_RESTART_PRINTERS', True),
         printers=printers,
         path=path,
+        **{key: getattr(module, key.upper()) for key in OPTIONAL_KEYS if hasattr(module, key.upper())},
     )
 
 

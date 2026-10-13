@@ -1,8 +1,10 @@
 import asyncio
 import ipaddress
+import math
 import re
 import time
 from dataclasses import replace
+from functools import partial
 
 from telegram import Update, CallbackQuery, InputFile, InputMediaPhoto, MessageEntity
 from telegram.constants import ParseMode
@@ -20,7 +22,6 @@ from settings import PrinterConfig, Settings
 
 NOTIFY_USAGE = "Usage: /notify [printer] <layer> or /notify [printer] <percent>%"
 NOTIFY_EVERY_USAGE = "Usage: /notify_every [printer] layers <number>, time <minutes>, percent <number>, or off"
-NOTIFY_EVERY_UNITS = {"layers": "layers", "time": "minutes", "percent": "%"}
 CONFIG_USAGE = "Usage: /config or /config set <chat_id|status_chat_id|log_chat_id|update_interval> <value>"
 # Settings the owner can change at runtime; chat targets are 'chat_id' or 'chat_id/thread_id'
 CONFIG_KEYS = ("chat_id", "status_chat_id", "log_chat_id", "update_interval")
@@ -70,6 +71,22 @@ def _callback_pattern(action: str, legacy_action: str, option: str = "") -> str:
 
 def _mention(user) -> str:
     return f"@{user.username}" if user.username else user.full_name
+
+
+def _replied_to(message):
+    """The message this one deliberately replies to, if any.
+
+    In a forum topic, every message that isn't a real reply still "replies" to the
+    topic's creation message, which would otherwise point at whoever created the topic.
+    (Outside topics, message_thread_id is just the first message of a reply chain, so
+    it's only compared for topic messages.)
+    """
+    reply_to = getattr(message, "reply_to_message", None)
+    if not reply_to or reply_to.forum_topic_created:
+        return None
+    if message.is_topic_message and reply_to.message_id == message.message_thread_id:
+        return None
+    return reply_to
 
 
 class BotHandlers:
@@ -147,7 +164,7 @@ class BotHandlers:
         a text mention, or (with no token) the author of the replied-to message."""
         message = update.effective_message
         if token is None:
-            reply_to = getattr(message, "reply_to_message", None)
+            reply_to = _replied_to(message)
             if reply_to and reply_to.from_user and not reply_to.from_user.is_bot:
                 return reply_to.from_user.id
             return None
@@ -356,7 +373,7 @@ class BotHandlers:
         if session and session.stop_at_layer:
             info_text += f"- Stops at layer {session.stop_at_layer}\n"
         if session and session.notify_every_type:
-            info_text += f"- Recurring snapshots: every {session.notify_every_value} {NOTIFY_EVERY_UNITS[session.notify_every_type]}\n"
+            info_text += f"- Recurring snapshots: every {ui.every_text(session.notify_every_type, session.notify_every_value)}\n"
 
         await reply(info_text)
 
@@ -451,7 +468,7 @@ class BotHandlers:
             await reply(f"Recurring camera notifications disabled for Printer {printer_num}.")
             return
 
-        if len(args) != 2 or args[0].lower() not in NOTIFY_EVERY_UNITS:
+        if len(args) != 2 or args[0].lower() not in ui.NOTIFY_EVERY_UNITS:
             await reply(NOTIFY_EVERY_USAGE)
             return
 
@@ -476,7 +493,7 @@ class BotHandlers:
             initial_value = snap.progress // value
 
         self.storage.set_notify_every(printer_num, notify_type, value, initial_value)
-        await reply(f"Recurring camera notifications set every {value} {NOTIFY_EVERY_UNITS[notify_type]} "
+        await reply(f"Recurring camera notifications set every {ui.every_text(notify_type, value)} "
                     f"on Printer {printer_num}.")
 
     async def _pause_or_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE, pause: bool):
@@ -668,7 +685,7 @@ class BotHandlers:
             return
 
         tokens = args[1:]
-        if not tokens and not getattr(update.effective_message, "reply_to_message", None):
+        if not tokens and not _replied_to(update.effective_message):
             await reply(ui.watchers_text(printer_num, session, self.storage))
             return
 
@@ -843,21 +860,26 @@ class BotHandlers:
         results = await asyncio.gather(*(self._restart(num) for num in printer_nums))
         await update.effective_message.reply_text("\n".join(results))
 
-    async def cmd_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Admin only: reboot one or more printers and reconnect."""
+    async def _parse_printer_list(self, update: Update, args: list[str], command: str) -> list[int] | None:
+        """Printer numbers given to a multi-printer command, replying with usage or an error if invalid."""
         reply = update.effective_message.reply_text
-        if not await self._require_admin(update):
-            return
-        if not context.args:
-            await reply(f"Usage: /restart <printer> [printer ...]\nAvailable printers: {self.pm.numbers_text()}")
-            return
-
-        invalid = [arg for arg in context.args if not arg.isdigit() or int(arg) not in self.pm]
+        if not args:
+            await reply(f"Usage: {command} <printer> [printer ...]\nAvailable printers: {self.pm.numbers_text()}")
+            return None
+        invalid = [arg for arg in args if not arg.isdigit() or int(arg) not in self.pm]
         if invalid:
             await reply(f"Invalid printer number(s): {', '.join(invalid)}. Use {self.pm.numbers_text()}")
-            return
+            return None
         # dict.fromkeys drops repeats while keeping the order given
-        await self._restart_many(update, list(dict.fromkeys(int(arg) for arg in context.args)))
+        return list(dict.fromkeys(int(arg) for arg in args))
+
+    async def cmd_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin only: reboot one or more printers and reconnect."""
+        if not await self._require_admin(update):
+            return
+        nums = await self._parse_printer_list(update, context.args, "/restart")
+        if nums:
+            await self._restart_many(update, nums)
 
     async def cmd_restartall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin only: reboot every printer."""
@@ -870,17 +892,13 @@ class BotHandlers:
         reply = update.effective_message.reply_text
         if not await self._require_admin(update):
             return
-        if not context.args:
-            await reply(f"Usage: /home <printer> [printer ...]\nAvailable printers: {self.pm.numbers_text()}")
-            return
-        invalid = [arg for arg in context.args if not arg.isdigit() or int(arg) not in self.pm]
-        if invalid:
-            await reply(f"Invalid printer number(s): {', '.join(invalid)}. Use {self.pm.numbers_text()}")
+        nums = await self._parse_printer_list(update, context.args, "/home")
+        if not nums:
             return
 
         results = []
         homed = []
-        for num in dict.fromkeys(int(arg) for arg in context.args):
+        for num in nums:
             printer = self.pm.get_online_printer(num)
             if not printer:
                 results.append(f"Printer {num} is not connected.")
@@ -899,7 +917,7 @@ class BotHandlers:
 
     async def cmd_print(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin only (testing): print a 3MF from a replied-to document."""
-        reply_to = getattr(update.effective_message, "reply_to_message", None)
+        reply_to = _replied_to(update.effective_message)
         await self._print_document(update, context, context.args, reply_to.document if reply_to else None)
 
     async def cmd_print_caption(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -977,7 +995,7 @@ class BotHandlers:
         action = args[0].lower() if args else "list"
 
         if action == "list":
-            if len(args) > 1 or getattr(update.effective_message, "reply_to_message", None):
+            if len(args) > 1 or _replied_to(update.effective_message):
                 token = args[1] if len(args) > 1 else None
                 user_id = self._resolve_user(update, token)
                 if user_id is None:
@@ -1058,7 +1076,8 @@ class BotHandlers:
                 value = float(raw)
             except ValueError:
                 value = 0
-            if value < MIN_UPDATE_INTERVAL:
+            # nan passes a < check and makes asyncio.sleep return at once; inf is allowed (see README)
+            if math.isnan(value) or value < MIN_UPDATE_INTERVAL:
                 await reply(f"update_interval must be a number of seconds, at least {MIN_UPDATE_INTERVAL}.")
                 return
             value = int(value) if value.is_integer() else value
@@ -1097,13 +1116,18 @@ class BotHandlers:
         return None
 
     async def _forget_secret(self, update: Update):
-        """Delete a command containing an access code from group chats (needs delete rights)."""
+        """Delete a command containing an access code from group chats (needs delete rights).
+
+        Returns the reply function to use afterwards: quoting a deleted message fails, so it
+        replies in the same chat and topic without quoting.
+        """
         message = update.effective_message
         if message.chat.type != "private":
             try:
                 await message.delete()
             except Exception:
                 pass
+        return partial(message.reply_text, do_quote=False)
 
     async def cmd_printer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin only: list, add, edit or delete printers in config.yml."""
@@ -1138,7 +1162,7 @@ class BotHandlers:
                 if error:
                     await reply(error)
                     return
-            await self._forget_secret(update)
+            reply = await self._forget_secret(update)
             printers[num] = config
             self.settings.save()
             await self.pm.add_printer(num, config, self.ms.log_message)
@@ -1170,7 +1194,7 @@ class BotHandlers:
             await reply(error)
             return
         if field == "code":
-            await self._forget_secret(update)
+            reply = await self._forget_secret(update)
         config = replace(printers[num], **{PRINTER_FIELDS[field]: value})
         printers[num] = config
         self.settings.save()

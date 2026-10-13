@@ -64,6 +64,12 @@ A Telegram bot for monitoring and managing a fleet of Bambu Labs 3D printers. Th
    with `/config`. The bot rewrites `config.yml` when settings change, so hand-written comments
    are not kept.
 
+   `update_interval` must be at least 1 second, but has no upper limit. `/config set update_interval inf`
+   is accepted and stops printer polling, notifications and the status message. Setting it back with
+   `/config` doesn't help, because the monitor is already waiting out the old interval, and the value is
+   saved to `config.yml`, so it also survives restarts. To undo it, stop the bot, change
+   `update_interval` in `config.yml` by hand, and start it again.
+
    **Finding your printer information:**
    - **IP Address**: Check your router's DHCP client list or the printer's network settings
    - **Access Code**: Found in the printer's LAN settings
