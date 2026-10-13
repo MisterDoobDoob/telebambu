@@ -2,8 +2,9 @@ from telegram import BotCommand, BotCommandScopeChatMember
 from telegram.ext import Application, ContextTypes
 from dataclasses import dataclass
 
-import config as cfg
 from bot.commands import get_commands
+from data import Role, Storage
+from settings import Settings
 
 
 @dataclass
@@ -43,39 +44,41 @@ def parse_chat_id(chat_id_str: str | None) -> tuple[str | None, int | None]:
     return parts[0], int(parts[1])
 
 
-def create_application() -> Application:
+def create_application(settings: Settings) -> Application:
     # Concurrent updates so a slow command (e.g. /camera waiting for a frame) doesn't block others
-    return Application.builder().token(cfg.TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+    return Application.builder().token(settings.telegram_bot_token).concurrent_updates(True).build()
 
 
-async def set_command_menu(bot) -> None:
-    """Configure separate Telegram slash-command menus for users and the owner."""
-    user_commands = [
-        BotCommand(command.name, command.description)
-        for command in get_commands()
-    ]
-    owner_commands = [
-        BotCommand(command.name, command.description)
-        for command in get_commands(owner_commands=True)
-    ]
+async def set_command_menu(bot, storage: Storage, settings: Settings) -> None:
+    """Configure Telegram slash-command menus: user commands for everyone, plus each
+    admin's and the owner's extra commands for them in the main chat."""
+    await bot.set_my_commands(_bot_commands(Role.USER))
 
-    await bot.set_my_commands(user_commands)
-
-    chat_id, _ = parse_chat_id(cfg.CHAT_ID)
-    if chat_id is not None:
-        await bot.set_my_commands(
-            owner_commands,
-            scope=BotCommandScopeChatMember(
-                chat_id=chat_id,
-                user_id=cfg.OWNER_ID,
-            ),
-        )
+    chat_id, _ = parse_chat_id(settings.chat_id)
+    if chat_id is None:
+        return
+    for role, user_ids in storage.staff().items():
+        if role < Role.ADMIN:
+            continue  # mods have no extra commands
+        for user_id in user_ids:
+            try:
+                await bot.set_my_commands(
+                    _bot_commands(role),
+                    scope=BotCommandScopeChatMember(chat_id=chat_id, user_id=user_id),
+                )
+            except Exception as e:
+                # e.g. the user isn't in the main chat; don't block startup over a menu
+                print(f'Failed to set command menu for user {user_id}: {e}')
 
 
-def get_bot_context() -> BotContext:
-    chat_id, thread_id = parse_chat_id(cfg.CHAT_ID)
-    status_chat_id, status_thread_id = parse_chat_id(cfg.STATUS_CHAT_ID)
-    log_chat_id, log_thread_id = parse_chat_id(cfg.LOG_CHAT_ID)
+def _bot_commands(role: Role) -> list[BotCommand]:
+    return [BotCommand(command.name, command.description) for command in get_commands(role)]
+
+
+def get_bot_context(settings: Settings) -> BotContext:
+    chat_id, thread_id = parse_chat_id(settings.chat_id)
+    status_chat_id, status_thread_id = parse_chat_id(settings.status_chat_id)
+    log_chat_id, log_thread_id = parse_chat_id(settings.log_chat_id)
 
     return BotContext(
         chat_id=chat_id,

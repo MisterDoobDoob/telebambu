@@ -1,25 +1,41 @@
 from dataclasses import dataclass
 
+from data import Role
+
 
 @dataclass(frozen=True)
 class CommandDefinition:
     name: str
     description: str
-    owner_only: bool = False
+    min_role: Role = Role.USER
 
 
 COMMANDS = (
     CommandDefinition("help", "Show available commands"),
-    CommandDefinition("camera", "View printer camera"),
+    CommandDefinition("info", "Show your prints or a print's details"),
+    CommandDefinition("claim", "Claim an unclaimed print"),
+    CommandDefinition("unclaim", "Release a claimed print"),
     CommandDefinition("notify", "Set a one-time notification"),
     CommandDefinition("notify_every", "Set recurring camera notifications"),
-    CommandDefinition("info", "Show current print info"),
-    CommandDefinition("unclaim", "Release a claimed print"),
-    CommandDefinition("restart", "Restart a printer connection", owner_only=True),
-    CommandDefinition("light", "Toggle printer light", owner_only=True),
+    CommandDefinition("notify_user", "Notify other users about a print"),
+    CommandDefinition("stop_at", "Stop a print at a layer"),
+    CommandDefinition("pause", "Pause a print"),
+    CommandDefinition("resume", "Resume a paused print"),
+    CommandDefinition("speed", "Change a print's speed"),
+    CommandDefinition("skip", "Skip objects on the plate"),
+    CommandDefinition("camera", "View printer camera"),
+    CommandDefinition("light", "Toggle printer light"),
+    CommandDefinition("staff", "See the owner, admins and mods"),
+    CommandDefinition("forcereclaim", "Give a print to someone else", Role.ADMIN),
+    CommandDefinition("restart", "Reboot printers", Role.ADMIN),
+    CommandDefinition("restartall", "Reboot every printer", Role.ADMIN),
+    CommandDefinition("home", "Home the axes of idle printers", Role.ADMIN),
+    CommandDefinition("print", "Print a sliced .3mf (testing)", Role.ADMIN),
+    CommandDefinition("printer", "List, add, edit or remove printers", Role.ADMIN),
+    CommandDefinition("config", "Show or change bot settings", Role.OWNER),
 )
 
 
-def get_commands(owner_commands: bool = False) -> tuple[CommandDefinition, ...]:
-    """Return commands available to the requested audience."""
-    return tuple(command for command in COMMANDS if owner_commands or not command.owner_only)
+def get_commands(role: Role = Role.USER) -> tuple[CommandDefinition, ...]:
+    """Return the commands available to a role."""
+    return tuple(command for command in COMMANDS if role >= command.min_role)

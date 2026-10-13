@@ -3,11 +3,10 @@ import faulthandler
 import signal
 import socket
 
-import config as cfg
+from settings import load as load_settings
 from data import Storage
 from bot import create_application, get_bot_context, setup_handlers, MessageService, set_command_menu
 from printers import PrinterManager, PrinterMonitor
-from printers.monitor import DEFAULT_UPDATE_INTERVAL, DEFAULT_STATS_LOG_INTERVAL
 
 # bambulabs_api's camera thread opens its socket and does the TLS handshake with no
 # timeout, so a printer whose camera service wedges (or that reboots mid-handshake)
@@ -23,16 +22,15 @@ faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 
 async def main():
+    settings = load_settings()
     storage = Storage()
-    printer_manager = PrinterManager(cfg.PRINTERS)
-    app = create_application()
-    await set_command_menu(app.bot)
-    message_service = MessageService(app.bot, get_bot_context(), storage)
-    setup_handlers(app, storage, message_service, printer_manager)
-    monitor = PrinterMonitor(printer_manager, message_service,
-                             getattr(cfg, 'UPDATE_INTERVAL', DEFAULT_UPDATE_INTERVAL),
-                             getattr(cfg, 'AUTO_RESTART_PRINTERS', True),
-                             getattr(cfg, 'STATS_LOG_INTERVAL', DEFAULT_STATS_LOG_INTERVAL))
+    storage.ensure_owner(settings.owner_id)
+    printer_manager = PrinterManager(settings.printers)
+    app = create_application(settings)
+    await set_command_menu(app.bot, storage, settings)
+    message_service = MessageService(app.bot, get_bot_context(settings), storage)
+    setup_handlers(app, storage, message_service, printer_manager, settings)
+    monitor = PrinterMonitor(printer_manager, message_service, settings)
 
     # Stop cleanly on Ctrl+C or `kill` (stop.sh)
     stop = asyncio.Event()

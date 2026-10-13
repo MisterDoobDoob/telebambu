@@ -9,6 +9,7 @@ A Telegram bot for monitoring and managing a fleet of Bambu Labs 3D printers. Th
 - Users can "claim" print jobs and receive personalized updates
 - Live camera access to view printers
 - Layer 2 progress notifications
+- Low filament (10% or less on the spool in use) and filament run-out alerts to a print's claimer and anyone added with `/notify_user`
 - Persistent status message showing all printer states
 - Configurable notification preferences (chat or DM)
 
@@ -41,34 +42,27 @@ A Telegram bot for monitoring and managing a fleet of Bambu Labs 3D printers. Th
 
 1. Copy the example configuration file:
    ```bash
-   cp config_example.py config.py
+   cp config_example.yml config.yml
    ```
 
-2. Edit `config.py` with your settings:
+2. Edit `config.yml` with your bot token, chat IDs, owner ID and printers. See the comments in
+   `config_example.yml` for what each setting does. Printers are listed by number:
 
-   ```python
-   # Telegram Chat IDs
-   # Format: 'chat_id' or 'chat_id/thread_id' if using forum threads
-   LOG_CHAT_ID = '1234567890'        # Chat/topic for logging (set to None to disable)
-   CHAT_ID = '1234567890/1234'       # Main chat for print updates
-   STATUS_CHAT_ID = '1234567890/1234' # Chat for status messages
-
-   # Bot owner user ID (can use /camera command for any printer)
-   OWNER_ID = 1234567890
-
-   # Your Telegram bot token from @BotFather
-   TELEGRAM_BOT_TOKEN = '1234567890:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-
-   # Update interval in seconds
-   UPDATE_INTERVAL = 3
-
-   # Printer configuration
-   # Format: (display_name, mac_address, ip_address, access_code, serial_number)
-   PRINTERS = [
-       ('1', 'AA:BB:CC:DD:EE:FF', '192.168.1.123', '12345678', '0123456789ABCDE'),
-       ('2', '00:11:22:33:44:55', '192.168.1.124', '12345679', '123456789ABCDEF'),
-   ]
+   ```yaml
+   printers:
+     1:
+       mac: 'AA:BB:CC:DD:EE:FF'
+       ip: '192.168.1.123'
+       access_code: '12345678'
+       serial: '0123456789ABCDE'
    ```
+
+   Upgrading from `config.py`? Start the bot once without a `config.yml` and it will create one
+   from your `config.py`, which can then be deleted.
+
+   The owner can change `chat_id`, `status_chat_id`, `log_chat_id` and `update_interval` at runtime
+   with `/config`. The bot rewrites `config.yml` when settings change, so hand-written comments
+   are not kept.
 
    **Finding your printer information:**
    - **IP Address**: Check your router's DHCP client list or the printer's network settings
@@ -139,17 +133,43 @@ sudo systemctl start telebambu
 
 ### Telegram Commands
 
-`[printer]` is optional when you have exactly one print claimed.
+`[printer]` is optional when you have exactly one print claimed. Users can be given as `@username`
+(once the bot has seen them), a numeric user id, or by replying to one of their messages.
+`/help` only lists the commands your role can use.
 
-- `/help` - List available commands
-- `/info [printer]` - Show progress, time remaining, layer and pending notifications for your print
-- `/camera [printer]` - Get a fresh camera snapshot (owner can access all printers, users can access their claimed printers)
-- `/light [printer]` - Toggle the printer light (owner or claimer)
-- `/notify [printer] <layer>` or `/notify [printer] <percent>%` - Send a one-time notification with a camera snapshot at a milestone
-- `/notify_every [printer] layers|time|percent <number>` - Send recurring camera snapshots during a print
-- `/notify_every [printer] off` - Disable recurring camera snapshots
+**Everyone**
+- `/help` - List the commands you can use
+- `/info` - Summary of all your claimed and watched prints, in the status message style
+- `/info <printer>` - Progress, time remaining, layer, file name, temperatures, speed, loaded filament (AMS slots and external spool, with % left) and pending notifications for a print
+- `/claim <printer>` - Claim an unclaimed print without its button
 - `/unclaim [printer]` - Release your claim on a print
-- `/restart <printer>` - Reboot and reconnect a printer (owner only)
+- `/notify [printer] <layer>` or `/notify [printer] <percent>%` - One-time notification with a camera snapshot at a milestone
+- `/notify_every [printer] layers|time|percent <number>` - Recurring camera snapshots during a print (`off` to disable)
+- `/notify_user <printer> <user> [user ...]` - Also notify other users about a claimed print (`remove` to stop, no users to list); the claimer and anyone already notified can use it
+- `/stop_at [printer] <layer>` - Stop the print automatically at a layer (`off` to cancel)
+- `/pause [printer]` / `/resume [printer]` - Pause or resume your print
+- `/speed [printer] <silent|standard|sport|ludicrous>` - Change your print's speed profile (no value shows the current one)
+- `/skip [printer]` - List the objects on the plate being printed; `/skip <printer> <object> [object ...]` stops printing those objects (read from the print's 3MF on the printer over FTP)
+- `/camera [printer]` - Fresh camera snapshot; in your DM it has a Refresh button
+- `/light [printer]` - Toggle the printer light
+- `/staff [list [user]]` - See the owner, admins and mods, or one user's role
+
+**Admins** (the owner can do all of these too)
+- `/camera`, `/light`, `/stop_at`, `/pause`, `/resume`, `/speed` and `/skip` work on any printer
+- `/forcereclaim <printer> <user>` - Give a print to another user (logged)
+- `/restart <printer> [printer ...]` / `/restartall` - Reboot and reconnect printers
+- `/home <printer> [printer ...]` - Home the axes of idle printers (refused while printing)
+- `/print <printer> [plate] [ams|ext]` - Remote printing, for testing: send a sliced `.3mf` (up to 20 MB) with this as its caption, or reply to one with it. The bot uploads it to the printer's SD card and starts the plate. Filament N in the project is printed from AMS tray N; `ext` uses the external spool instead
+- `/printer list|add|edit|del` - Manage printers in `config.yml`, e.g. `/printer add 25 AA:BB:CC:DD:EE:FF 192.168.1.125 12345678 SERIAL`, `/printer edit 25 ip 192.168.1.126`
+- `/staff edit <mod|user> <user>` - Add or remove mods
+
+**Owner**
+- `/staff edit <admin|mod|user> <user>` - Add or remove admins and mods
+- `/staff edit owner <user>` - Transfer ownership (asks for confirmation; you become an admin)
+- `/config` / `/config set <key> <value>` - Change `chat_id`, `status_chat_id`, `log_chat_id` or `update_interval`
+
+Role changes, force reclaims, restarts and printer/config changes are posted to the log chat.
+Mods have no extra permissions yet.
 
 ### Interactive Buttons
 
@@ -157,15 +177,16 @@ When a print starts, the bot sends a message with a **Claim Print** button. Clai
 - Receive the finish notification directly
 - Choose between chat or DM delivery
 - Enable/disable Layer 2 progress notifications
-- Access the printer's camera
+- Access the printer's camera, with a Refresh button on images in your DM
 
 ## Project Structure
 
 ```
 telebambu/
 ├── main.py              # Application entry point
-├── config.py            # Configuration (create from config_example.py)
-├── config_example.py    # Configuration template
+├── settings.py          # Loads and saves config.yml
+├── config.yml           # Configuration (create from config_example.yml)
+├── config_example.yml   # Configuration template
 ├── requirements.txt     # Python dependencies
 ├── start.sh             # Shell script to run the bot
 ├── bot/                 # Telegram bot module
@@ -182,4 +203,4 @@ telebambu/
 
 ## License
 
-MIT License
+This project is licensed under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE) for details.
