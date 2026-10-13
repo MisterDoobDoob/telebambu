@@ -27,6 +27,8 @@ class PrintSession:
     notify_every_value: Optional[int] = None
     notify_every_last_value: Optional[int] = None
     notify_every_last_sent_at: Optional[float] = None
+    file_name: Optional[str] = None  # tells prints apart across bot restarts
+    catchup: bool = False  # announced at startup rather than when it started
 
 
 @dataclass
@@ -92,13 +94,16 @@ class Storage:
     # --- Session lifecycle ---
 
     def start_print(self, printer_index: int, message_id: int, chat_id: str,
-                    print_time: str = None, total_layers: int = 0) -> PrintSession:
+                    print_time: str = None, total_layers: int = 0,
+                    file_name: str = None, catchup: bool = False) -> PrintSession:
         session = PrintSession(
             message_id=message_id,
             chat_id=chat_id,
             printer_index=printer_index,
             print_time=print_time,
             total_layers=total_layers,
+            file_name=file_name,
+            catchup=catchup,
         )
         self.active_prints[printer_index] = session
         self._save()
@@ -135,6 +140,8 @@ class Storage:
             printer_index=printer_index,
             print_time=session.print_time,
             total_layers=session.total_layers,
+            file_name=session.file_name,
+            catchup=session.catchup,
         )
         self._save()
         return self.active_prints[printer_index]

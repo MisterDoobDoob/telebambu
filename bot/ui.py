@@ -20,6 +20,8 @@ HELP_TEXT = (
 NO_CLAIM = "You don't have an active print claimed."
 SESSION_ENDED = "This print session has ended."
 CLAIM_DM_PROMPT = "Where would you like to receive the finished print image?"
+# Marks messages about prints the bot only noticed after a restart
+CATCHUP_TAG = "[catchup] "
 
 
 def _print_details(session: PrintSession) -> str:
@@ -33,12 +35,14 @@ def _print_details(session: PrintSession) -> str:
 
 def started_text(printer_index: int, session: PrintSession) -> str:
     """Main chat text for an unclaimed print."""
-    return f"Printer {printer_index + 1} has started printing.{_print_details(session)}"
+    tag = CATCHUP_TAG if session.catchup else ""
+    return f"{tag}Printer {printer_index + 1} has started printing.{_print_details(session)}"
 
 
 def claimed_text(printer_index: int, session: PrintSession) -> str:
     """Main chat text for a claimed print."""
-    return f"Printer {printer_index + 1} started by {session.claimed_username}{_print_details(session)}"
+    tag = CATCHUP_TAG if session.catchup else ""
+    return f"{tag}Printer {printer_index + 1} started by {session.claimed_username}{_print_details(session)}"
 
 
 def claim_keyboard(printer_index: int) -> InlineKeyboardMarkup:

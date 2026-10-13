@@ -85,6 +85,7 @@ class EventType(Enum):
     PRINT_PAUSED = auto()
     LAYER_CHANGED = auto()
     STATE_CHANGED = auto()
+    FIRST_SEEN = auto()  # first state reported after the bot starts
 
 
 @dataclass
@@ -199,6 +200,16 @@ class PrinterManager:
             return self.printers[index]
         return None
 
+    def file_name(self, index: int) -> str | None:
+        """Name of the printer's current (or last) print job, if it reports one."""
+        printer = self.get_printer(index)
+        if not printer:
+            return None
+        try:
+            return printer.subtask_name() or printer.gcode_file() or None
+        except Exception:
+            return None
+
     def seconds_since_connect(self, index: int) -> float:
         return time.time() - self.connected_at[index]
 
@@ -243,6 +254,10 @@ class PrinterManager:
 
         def event(event_type: EventType, **data) -> PrinterEvent:
             return PrinterEvent(type=event_type, printer_index=i, printer=printer, data=data)
+
+        # prev_states isn't reset on reconnect, so this normally fires only once, after startup
+        if prev_gcode_state == GcodeState.UNKNOWN and gcode_state != GcodeState.UNKNOWN:
+            yield event(EventType.FIRST_SEEN, state=gcode_state)
 
         # Check for gcode state changes
         if prev_gcode_state != GcodeState.UNKNOWN and prev_gcode_state != gcode_state:

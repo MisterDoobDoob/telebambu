@@ -19,6 +19,8 @@ CAMERA_STARTUP_GRACE = 30  # seconds
 DEFAULT_STATS_LOG_INTERVAL = 60 * 60  # seconds between update timing/status reports
 # Only auto-restart printers in these states, so a running print is never interrupted
 NOT_PRINTING_STATES = (GcodeState.IDLE, GcodeState.FINISH)
+# States where a print is underway
+ACTIVE_PRINT_STATES = (GcodeState.RUNNING, GcodeState.PAUSE)
 
 
 class PrinterMonitor:
@@ -85,17 +87,18 @@ class PrinterMonitor:
         await self.ms.flush_logs()
 
     async def _process_printer(self, i: int):
-        try:
-            await self._check_stale_camera(i)
-            await self._check_periodic_camera(i)
-        except Exception as e:
-            print(f'Error running checks for printer {i + 1}: {e}')
-
+        # Handle events first, so checks below see sessions already caught up after a restart
         for event in self.pm.poll(i):
             try:
                 await self._handle_event(event)
             except Exception as e:
                 print(f'Error handling event {event.type} for printer {i + 1}: {e}')
+
+        try:
+            await self._check_stale_camera(i)
+            await self._check_periodic_camera(i)
+        except Exception as e:
+            print(f'Error running checks for printer {i + 1}: {e}')
 
     async def _check_stale_camera(self, i: int):
         """Auto-restart an idle/finished printer whose camera has stopped sending frames (once per outage)."""
@@ -159,7 +162,11 @@ class PrinterMonitor:
 
         elif event.type == EventType.PRINT_STARTED:
             await asyncio.sleep(PRINT_STARTED_DELAY)
-            await self.ms.send_print_started(i, format_duration(printer.get_time()), to_int(printer.total_layer_num()))
+            await self.ms.send_print_started(i, format_duration(printer.get_time()), to_int(printer.total_layer_num()),
+                                             file_name=self.pm.file_name(i))
+
+        elif event.type == EventType.FIRST_SEEN:
+            await self._reconcile_on_startup(i, event.data['state'])
 
         elif event.type == EventType.PRINT_FINISHED:
             await self.ms.send_print_finished(i, await self.pm.get_camera_frame(i))
@@ -174,6 +181,50 @@ class PrinterMonitor:
 
         elif event.type == EventType.LAYER_CHANGED:
             await self._handle_layer_change(i, event.data['prev_layer'], event.data['layer'])
+
+    async def _reconcile_on_startup(self, i: int, state: GcodeState):
+        """Compare a printer's live state with the print stored before the restart, and
+        catch up on whatever changed while the bot was down."""
+        printer = self.pm.get_printer(i)
+        session = self.storage.get_print(i)
+        current = self.pm.file_name(i)
+        # Only a stored name can prove a different print; older sessions have none
+        replaced = bool(session and session.file_name and current and session.file_name != current)
+        prefix = f'Startup: Printer {i + 1}'
+
+        async def announce_current():
+            await self.ms.send_print_started(i, format_duration(printer.get_time()), to_int(printer.total_layer_num()),
+                                             file_name=current, catchup=True)
+
+        if state in ACTIVE_PRINT_STATES:
+            if not session:
+                await announce_current()
+                await self.ms.log_message(f"{prefix}: untracked print '{current}' found running, announced [catchup]")
+            elif replaced:
+                # The camera now shows the new print, so the old one gets no image
+                await self.ms.send_print_finished(i, None, catchup=True)
+                await announce_current()
+                await self.ms.log_message(f"{prefix}: stored print '{session.file_name}' replaced by '{current}' while offline")
+            else:
+                note = '' if session.file_name else ' (no stored file name, assuming same print)'
+                await self.ms.log_message(f"{prefix}: resumed tracked print '{current}'{note}")
+
+        elif state in (GcodeState.FINISH, GcodeState.IDLE) and session:
+            await self.ms.send_print_finished(i, await self.pm.get_camera_frame(i), catchup=True)
+            await self.ms.log_message(f'{prefix}: tracked print ended while offline, sent [catchup] finish')
+
+        elif state == GcodeState.FAILED and session:
+            frame = await self.pm.get_camera_frame(i)
+            await self.ms.send_print_failed(i, printer.print_error_code(), frame, catchup=True)
+            await self.ms.log_message(f'{prefix}: tracked print failed while offline, sent [catchup] failure')
+
+        elif state == GcodeState.PREPARE and replaced:
+            # The PREPARE -> RUNNING change announces the new print as usual
+            await self.ms.send_print_finished(i, None, catchup=True)
+            await self.ms.log_message(f'{prefix}: stored print replaced, new print preparing')
+
+        else:
+            await self.ms.log_message(f'{prefix}: {state}, nothing to catch up')
 
     async def _handle_layer_change(self, i: int, prev_layer: int, layer: int):
         session = self.storage.get_print(i)

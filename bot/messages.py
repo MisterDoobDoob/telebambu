@@ -88,18 +88,21 @@ class MessageService:
 
     # --- Print lifecycle ---
 
-    async def send_print_started(self, printer_index: int, print_time: str, total_layers: int = 0) -> int:
+    async def send_print_started(self, printer_index: int, print_time: str, total_layers: int = 0,
+                                 file_name: str | None = None, catchup: bool = False) -> int:
         await self._delete_started_message(self.storage.get_print(printer_index))
 
         # Build the text from a provisional session so it matches later edits (unclaim etc.)
         draft = PrintSession(message_id=0, chat_id=self.ctx.chat_id, printer_index=printer_index,
-                             print_time=print_time, total_layers=total_layers)
+                             print_time=print_time, total_layers=total_layers,
+                             file_name=file_name, catchup=catchup)
         msg = await self._send_main(ui.started_text(printer_index, draft), reply_markup=ui.claim_keyboard(printer_index))
 
-        self.storage.start_print(printer_index, msg.message_id, self.ctx.chat_id, print_time, total_layers)
+        self.storage.start_print(printer_index, msg.message_id, self.ctx.chat_id, print_time, total_layers,
+                                 file_name, catchup)
         return msg.message_id
 
-    async def send_print_finished(self, printer_index: int, image: bytes | None):
+    async def send_print_finished(self, printer_index: int, image: bytes | None, catchup: bool = False):
         session = self.storage.get_print(printer_index)
         await self._delete_started_message(session)
 
@@ -107,6 +110,8 @@ class MessageService:
             message = f"Printer {printer_index + 1} has finished printing. ({session.claimed_username})"
         else:
             message = f"Printer {printer_index + 1} has finished printing."
+        if catchup:
+            message = ui.CATCHUP_TAG + message
 
         if session and session.claimed_by and session.dm_preference == "dm":
             await self._send(session.claimed_by, message, image)
@@ -115,13 +120,16 @@ class MessageService:
 
         self.storage.end_print(printer_index)
 
-    async def send_print_failed(self, printer_index: int, error_code, image: bytes | None = None):
+    async def send_print_failed(self, printer_index: int, error_code, image: bytes | None = None,
+                                catchup: bool = False):
         """Send print failure notification to the print owner (if claimed) and bot owner.
         Deletes the 'started printing' message and cleans up the session."""
         session = self.storage.get_print(printer_index)
         await self._delete_started_message(session)
 
         message = f"Printer {printer_index + 1} failed!\n{lookup_error(error_code)}"
+        if catchup:
+            message = ui.CATCHUP_TAG + message
         targets = []  # (chat_id, thread_id, label)
 
         # Notify the print owner (claimer) based on their DM preference
