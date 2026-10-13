@@ -24,8 +24,6 @@ PRE_PRINT_STATES = (GcodeState.FINISH, GcodeState.IDLE, GcodeState.PREPARE)
 DISCONNECT_TIMEOUT = 10  # seconds
 # How long uploading a print file over FTP may take
 UPLOAD_TIMEOUT = 5 * 60  # seconds
-# How long a reboot + reconnect may take before it is reported as failed
-RESTART_TIMEOUT = 30  # seconds
 # Bambu print speed profiles, as reported in spd_lvl and set with the print_speed command
 SPEED_LEVELS = {1: 'silent', 2: 'standard', 3: 'sport', 4: 'ludicrous'}
 # tray_now values that aren't an AMS slot
@@ -274,10 +272,12 @@ class PrinterManager:
         slot = self.slots.pop(num, None)
         self._logged_disconnected.discard(num)
         if slot and slot.printer:
-            # disconnect() joins the camera thread, which can block for a long time on an
-            # unreachable printer; run it off the event loop and stop waiting after a while
+            # disconnect() joins the camera thread, which can hang forever on an unreachable
+            # printer; run_blocking abandons it after a while without holding up shutdown
             try:
-                await asyncio.wait_for(asyncio.to_thread(slot.printer.disconnect), DISCONNECT_TIMEOUT)
+                await run_blocking(slot.printer.disconnect, DISCONNECT_TIMEOUT)
+            except TimeoutError:
+                print(f'Printer {num} did not disconnect within {DISCONNECT_TIMEOUT}s, abandoning it')
             except Exception as e:
                 print(f'Printer {num} did not disconnect cleanly: {e}')
 
