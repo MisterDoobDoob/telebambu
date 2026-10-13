@@ -5,7 +5,7 @@ import socket
 
 import config as cfg
 from data import Storage
-from bot import create_application, get_bot_context, setup_handlers, MessageService
+from bot import create_application, get_bot_context, setup_handlers, MessageService, set_command_menu
 from printers import PrinterManager, PrinterMonitor
 from printers.monitor import DEFAULT_UPDATE_INTERVAL, DEFAULT_STATS_LOG_INTERVAL
 
@@ -26,6 +26,7 @@ async def main():
     storage = Storage()
     printer_manager = PrinterManager(cfg.PRINTERS)
     app = create_application()
+    await set_command_menu(app.bot)
     message_service = MessageService(app.bot, get_bot_context(), storage)
     setup_handlers(app, storage, message_service, printer_manager)
     monitor = PrinterMonitor(printer_manager, message_service,
